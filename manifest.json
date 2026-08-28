@@ -1,0 +1,16 @@
+{
+  "name": "La Polla TICO",
+  "short_name": "Polla TICO",
+  "description": "Pronostica, compite y gana en La Polla TICO.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0E241D",
+  "theme_color": "#16342A",
+  "categories": ["sports", "games"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
