@@ -1612,15 +1612,20 @@ async function sendAllPredictions(){
   incomingRefCode = (params.get('ref') || '').toUpperCase();
 })();
 
-// Si se está restaurando una Polla tras refresh, no pintamos la portada ni un instante.
+// V23: al refrescar dentro de una Polla mostramos de inmediato el cascarón de la
+// Polla (no una pantalla verde vacía). Importante: NO incrementamos activeRequests
+// manualmente aquí; apiGet() ya administra el loader y así evitamos que quede pegado.
 if(incomingPollaId){
   document.getElementById('landingScreen')?.classList.add('hidden');
-  document.getElementById('appScreen')?.classList.add('hidden');
-  showGlobalLoader();
+  document.getElementById('appScreen')?.classList.remove('hidden');
+  const restoreTitle = document.getElementById('pollaTitle');
+  if(restoreTitle) restoreTitle.textContent = 'Cargando tu Polla…';
+  const restoreBox = document.getElementById('matchesContainer');
+  if(restoreBox) restoreBox.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
 }
 
 
-/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V22) ============ */
+/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V23) ============ */
 // Chrome/Edge suelen interpretar cualquier <input type="password"> como contraseña web.
 // Para los PIN internos de TICO usamos un campo de texto visualmente enmascarado SOLO
 // cuando el navegador soporta -webkit-text-security. En otros navegadores queda el
@@ -4746,8 +4751,9 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V22';
-let appUpdateWaiting = false;
+const APP_VERSION = 'V23';
+let appUpdateWorker = null;
+let appUpdateApplying = false;
 
 function showAppUpdateNotice(){
   if(document.getElementById('appUpdateNotice')) return;
@@ -4768,9 +4774,20 @@ function showAppUpdateNotice(){
     </div>
     <button id="applyAppUpdateBtn" type="button" style="flex:0 0 auto;border:0;border-radius:10px;padding:9px 12px;background:#F2C14E;color:#07110F;font-weight:800;cursor:pointer">Actualizar</button>`;
   document.body.appendChild(bar);
+
   document.getElementById('applyAppUpdateBtn')?.addEventListener('click', () => {
-    appUpdateWaiting = false;
-    location.reload();
+    if(appUpdateApplying) return;
+    appUpdateApplying = true;
+    const btn = document.getElementById('applyAppUpdateBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
+
+    // V23: el SW nuevo permanece en waiting hasta que el usuario confirme.
+    // Al recibir SKIP_WAITING toma el control; controllerchange hace UN solo reload.
+    if(appUpdateWorker && appUpdateWorker.state === 'installed'){
+      appUpdateWorker.postMessage({type:'SKIP_WAITING'});
+    } else {
+      location.reload();
+    }
   });
 }
 
@@ -4779,37 +4796,31 @@ if('serviceWorker' in navigator){
     try{
       const reg = await navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`);
 
-      // Pide una comprobación fresca al abrir la app. El navegador sigue
-      // respetando sus límites, pero evita depender solo del chequeo periódico.
-      reg.update().catch(()=>{});
+      const offerUpdate = (worker) => {
+        if(!worker || !navigator.serviceWorker.controller) return;
+        appUpdateWorker = worker;
+        showAppUpdateNotice();
+      };
 
       const watchInstallingWorker = (worker) => {
         if(!worker) return;
         worker.addEventListener('statechange', () => {
-          if(worker.state === 'installed' && navigator.serviceWorker.controller){
-            appUpdateWaiting = true;
-            showAppUpdateNotice();
-          }
+          if(worker.state === 'installed') offerUpdate(worker);
         });
       };
 
+      // Puede existir una actualización que terminó de instalar mientras la app estaba cerrada.
+      if(reg.waiting) offerUpdate(reg.waiting);
       if(reg.installing) watchInstallingWorker(reg.installing);
       reg.addEventListener('updatefound', () => watchInstallingWorker(reg.installing));
 
-      // Si el SW nuevo ya tomó control (usa skipWaiting), NO recargamos solos:
-      // mostramos el aviso para no interrumpir a alguien que está pronosticando.
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if(!appUpdateWaiting){
-          appUpdateWaiting = true;
-          showAppUpdateNotice();
-        }
-      });
+      // Comprobación fresca al abrir la app.
+      reg.update().catch(()=>{});
 
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        if(event.data && event.data.type === 'APP_UPDATE_READY'){
-          appUpdateWaiting = true;
-          showAppUpdateNotice();
-        }
+      // Solo recargamos cuando el usuario ya pulsó "Actualizar" y el nuevo SW
+      // realmente tomó control. Esto elimina el doble aviso / doble toque de V22.
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if(appUpdateApplying) location.reload();
       });
     }catch(err){
       console.warn('No se pudo registrar el service worker:', err);
