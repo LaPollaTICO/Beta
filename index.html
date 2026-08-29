@@ -384,7 +384,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .archived-item{border:1px solid #e0dccc; border-radius:12px; padding:14px; margin-top:10px; cursor:pointer; display:flex; justify-between; align-items:center;}
 .archived-item:active{background:#f4f1e6;}
 
-.confetti-piece{position:fixed; top:-20px; z-index:200; pointer-events:none; border-radius:2px;}
+.confetti-piece{position:fixed; top:-20px; z-index:100001; pointer-events:none; border-radius:2px;}
 @keyframes confettiFall{to{transform:translateY(110vh) rotate(540deg); opacity:0.3;}}
 
 .global-loader{
@@ -1464,8 +1464,14 @@ async function sendAllPredictions(){
     const awayEl = document.getElementById(`score-${m.id}-away`);
     if(!homeEl || !awayEl) continue;
     
-    const home = parseInt(homeEl.value !== '' ? homeEl.value : 0);
-    const away = parseInt(awayEl.value !== '' ? awayEl.value : 0);
+    const home = parseScoreValue_(homeEl.value);
+    const away = parseScoreValue_(awayEl.value);
+    if(home === null || away === null){
+      btn.disabled = false;
+      btn.textContent = originalText;
+      alert(`Marcador inválido en ${m.home} vs ${m.away}. Usa números enteros entre 0 y 20.`);
+      return;
+    }
     
     btn.textContent = `Enviando ${sent + failed + 1} de ${selectedMatches.length}...`;
     try{
@@ -1488,6 +1494,51 @@ async function sendAllPredictions(){
   incomingPollaId = params.get('polla') || '';
   incomingRefCode = (params.get('ref') || '').toUpperCase();
 })();
+
+
+/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V19) ============ */
+function showToast_(message){
+  let toast = document.getElementById('ticoToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'ticoToast';
+    toast.setAttribute('role','status');
+    toast.setAttribute('aria-live','polite');
+    toast.style.cssText = [
+      'position:fixed','left:50%','bottom:24px','transform:translate(-50%,14px)',
+      'z-index:100002','max-width:calc(100vw - 32px)','padding:11px 16px',
+      'border:1px solid rgba(242,193,78,.65)','border-radius:12px',
+      'background:rgba(8,18,16,.97)','color:#F6F3EA','font-weight:800',
+      'box-shadow:0 12px 30px rgba(0,0,0,.42)','opacity:0',
+      'transition:opacity .18s ease, transform .18s ease','pointer-events:none',
+      'text-align:center'
+    ].join(';');
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  toast.style.transform = 'translate(-50%,0)';
+  clearTimeout(showToast_._timer);
+  showToast_._timer = setTimeout(()=>{
+    toast.style.opacity = '0';
+    toast.style.transform = 'translate(-50%,14px)';
+  }, 2200);
+}
+
+function parseScoreValue_(raw){
+  const text = String(raw ?? '').trim();
+  if(!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if(!Number.isInteger(n) || n < 0 || n > 20) return null;
+  return n;
+}
+
+let matchesLoadFailed_ = false;
+window.addEventListener('online', () => {
+  if(matchesLoadFailed_ && currentPolla){
+    void loadMatches();
+  }
+});
 
 /* ============ CONFETI ============ */
 function launchConfetti(){
@@ -2486,12 +2537,28 @@ async function ensurePredictionTrendsForGroup_(groupKey){
   return fetchPredictionTrendsForMatchIds_(ids);
 }
 async function loadMatches(){
-  document.getElementById('matchesContainer').innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
+  const box = document.getElementById('matchesContainer');
+  box.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
 
-  // OPT V14: la entrada inicial trae únicamente la lista de partidos.
-  // Las tendencias se consultan solo para la jornada que está visible (HOY).
-  const matchesResult = await apiGet('getMatches', {pollaId: currentPolla.id}).catch(()=>[]);
-  matches = Array.isArray(matchesResult) ? matchesResult : [];
+  // V19: un fallo de red NO se interpreta como una Polla sin partidos.
+  let matchesResult;
+  try{
+    matchesResult = await apiGet('getMatches', {pollaId: currentPolla.id});
+    if(!Array.isArray(matchesResult)) throw new Error(matchesResult?.error || 'Respuesta inválida del servidor');
+  }catch(err){
+    matchesLoadFailed_ = true;
+    box.innerHTML = `
+      <div class="empty">
+        <div class="ball">📡</div>
+        <div>No se pudieron cargar los partidos.</div>
+        <div class="hint" style="margin-top:6px">Revisa tu conexión a Internet y vuelve a intentarlo.</div>
+        <button class="submit-btn secondary" style="margin-top:14px" onclick="loadMatches()">🔄 Reintentar</button>
+      </div>`;
+    return false;
+  }
+
+  matchesLoadFailed_ = false;
+  matches = matchesResult;
 
   const validIds = new Set(matches.map(m=>String(m.id)));
   Object.keys(predictionsCache).forEach(id=>{ if(!validIds.has(String(id))) delete predictionsCache[id]; });
@@ -2506,10 +2573,9 @@ async function loadMatches(){
     .filter(m=>!collapsedDateGroups.has(dateGroupKey(m.closeAt)) && !m.isCanceled && !m.resultSubmitted)
     .map(m=>m.id);
 
-  // OPT V15: primero pintamos la jornada. Las tendencias son accesorias y se
-  // completan en segundo plano; ya no retrasan la entrada a la Polla.
   await renderMatches();
   void fetchPredictionTrendsForMatchIds_(visibleIds, true);
+  return true;
 }
 
 function invalidateStandingsCaches_(){
@@ -3020,8 +3086,12 @@ async function submitPrediction(matchId){
 
   const homeVal = document.getElementById(`score-${matchId}-home`).value;
   const awayVal = document.getElementById(`score-${matchId}-away`).value;
-  const home = parseInt(homeVal !== '' ? homeVal : 0);
-  const away = parseInt(awayVal !== '' ? awayVal : 0);
+  const home = parseScoreValue_(homeVal);
+  const away = parseScoreValue_(awayVal);
+  if(home === null || away === null){
+    alert('Marcador inválido. Usa números enteros entre 0 y 20.');
+    return;
+  }
 
   const btn = document.getElementById('submit-'+matchId);
   btn.disabled = true; btn.textContent = 'Enviando...';
@@ -3038,6 +3108,7 @@ async function submitPrediction(matchId){
     adminPredictionSummaryCache[matchId] = Number(adminPredictionSummaryCache[matchId] || 0) + 1;
   }
   await renderMatches();
+  showToast_(hadMineBefore ? '✅ Pronóstico actualizado' : '✅ Pronóstico guardado');
 }
 
 async function sharePrediction(matchId){
@@ -4318,7 +4389,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V18';
+const APP_VERSION = 'V19';
 let appUpdateWaiting = false;
 
 function showAppUpdateNotice(){

@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V18.
+// Service Worker de La Polla TICO — V19.
 // Shell inmediato + revalidación en segundo plano. Los datos de Supabase
 // continúan fuera del Service Worker para no mezclar sesiones ni permisos.
 
-const SHELL_CACHE = 'polla-tico-shell-v18';
-const RUNTIME_CACHE = 'polla-tico-runtime-v18';
+const SHELL_CACHE = 'polla-tico-shell-v19';
+const RUNTIME_CACHE = 'polla-tico-runtime-v19';
 
 const SHELL_FILES = [
   './',
@@ -38,7 +38,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
   event.waitUntil(
     self.clients.matchAll({type:'window', includeUncontrolled:true}).then(clients => {
-      clients.forEach(client => client.postMessage({type:'APP_UPDATE_READY', version:'V18'}));
+      clients.forEach(client => client.postMessage({type:'APP_UPDATE_READY', version:'V19'}));
     }).catch(()=>{})
   );
 });
