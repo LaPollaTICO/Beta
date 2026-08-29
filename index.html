@@ -118,6 +118,12 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .status-row{display:flex; align-items:center; justify-content:center; gap:8px; margin:6px 0 12px; flex-wrap:wrap;}
 .pin-locked-box{background:rgba(214,69,69,0.12); border:1px solid var(--red-card); border-radius:12px; padding:12px 14px; text-align:center; font-size:12.5px; color:var(--chalk); margin-bottom:18px;}
 .pay-pending-banner{background:rgba(242,193,78,0.15); border:1px solid var(--floodlight); border-radius:12px; padding:10px 14px; text-align:center; font-size:12.5px; font-weight:700; color:var(--floodlight); margin-bottom:14px;}
+.profile-mini-actions{display:flex;justify-content:center;align-items:center;gap:8px;margin:-4px 0 12px;}
+.profile-mini-btn{width:34px;height:34px;border-radius:50%;border:1px solid rgba(242,193,78,.38);background:rgba(242,193,78,.08);color:var(--floodlight);font-size:16px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
+.profile-mini-btn:active{transform:scale(.96);}
+.saved-check{position:absolute;right:10px;bottom:7px;z-index:8;color:#8FD9AA;font-size:21px;font-weight:900;line-height:1;pointer-events:none;text-shadow:0 1px 5px rgba(0,0,0,.65);}
+.connection-bar{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:999999;background:rgba(169,45,45,.97);color:white;border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:7px 13px;font-size:12px;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.28);}
+
 .pin-locked-box b{display:block; color:var(--red-card); margin-bottom:2px;}
 .pin-locked-box button{background:none; border:none; color:var(--floodlight); font-weight:700; text-decoration:underline; cursor:pointer; font-size:12.5px; margin-top:4px;}
 .pozo-box{background:rgba(46,160,90,0.12); border:1px solid #2ea05a; border-radius:12px; padding:12px 14px; text-align:left; font-size:13px; color:var(--ink); font-weight:700; margin-bottom:18px; line-height:1.6;}
@@ -421,6 +427,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 </svg>
 
 <div id="globalLoader" class="global-loader hidden"><span class="global-loader-dot"></span>Cargando...</div>
+<div id="connectionBar" class="connection-bar hidden">📡 Sin conexión</div>
 
 <!-- ======= PANTALLA PRINCIPAL ======= -->
 <div id="landingScreen" class="wrap">
@@ -476,12 +483,15 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <button class="check-btn" onclick="checkName()" title="Confirmar">✓</button>
   </div>
   <div class="status-row"><div class="name-status" id="nameStatus"></div><span id="streakBadge" class="streak-badge hidden"></span></div>
-  <div class="pay-pending-banner hidden" id="payPendingBanner">⏳ Tienes un pago pendiente para esta Polla.</div>
+  <div class="profile-mini-actions hidden" id="profileMiniActions">
+    <button class="profile-mini-btn hidden" id="setSecurityAnswerBtn" onclick="askForSecurityAnswer(authedName, authedPin)" title="Configurar recuperación de PIN" aria-label="Configurar recuperación de PIN">🔑</button>
+    <button class="profile-mini-btn" id="whatsappConfigBtn" onclick="configureMyWhatsapp()" title="WhatsApp de contacto (opcional)" aria-label="WhatsApp de contacto opcional">📱</button>
+  </div>
+  <div class="pay-pending-banner hidden" id="payPendingBanner">PAGO PENDIENTE</div>
   <div class="pin-locked-box hidden" id="pinLockedBox"></div>
 
   <div class="invite-row hidden" id="inviteRow"><button onclick="inviteFriends()">🎁 Invitar amigos</button></div>
   <div class="hint hidden" id="myReferralCodeBox" style="text-align:center; margin-top:-8px; margin-bottom:8px;"></div>
-  <div class="invite-row hidden" id="setSecurityAnswerBtn"><button onclick="askForSecurityAnswer(authedName, authedPin)">🔑 Configurar recuperación de PIN</button></div>
 
   <div class="bulk-toggle-row hidden" id="bulkToggleRow">
     <label class="bulk-toggle">
@@ -511,7 +521,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 
     <div id="accessPinBlock" class="hidden">
       <label>Tu PIN de 4 dígitos</label>
-      <input id="accessPinInput" inputmode="numeric" maxlength="4" type="password" placeholder="••••">
+      <input id="accessPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
       <button class="btn-primary" onclick="submitExistingLogin()">Entrar</button>
       <button class="btn-secondary" onclick="openRecoveryMode()">Olvidé mi PIN</button>
       <button class="btn-secondary" onclick="chooseOtherPerson()">Soy otra persona</button>
@@ -521,20 +531,20 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
       <label>Código brindado por Manolo</label>
       <input id="activationCodeInput" autocomplete="off" placeholder="TICO-XXXX">
       <label>Crea tu PIN de 4 dígitos</label>
-      <input id="activationPinInput" inputmode="numeric" maxlength="4" type="password" placeholder="••••">
+      <input id="activationPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
       <button class="btn-primary" onclick="submitActivation()">Activar y entrar</button>
     </div>
 
     <div id="accessRegisterBlock" class="hidden">
       <label>Nombre</label><input id="registerNameInput" autocomplete="off">
-      <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="password" placeholder="••••">
+      <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
       <div id="registerReferralWrap"><label>Código de invitación (opcional)</label><input id="registerReferralInput" autocomplete="off" placeholder="TICOXXXX"></div>
       <button class="btn-primary" onclick="submitNewRegistration()">Registrarme</button>
     </div>
 
     <div id="accessRecoveryBlock" class="hidden">
       <label>Respuesta de seguridad</label><input id="recoveryAnswerInput" autocomplete="off">
-      <label>Nuevo PIN de 4 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="4" type="password" placeholder="••••">
+      <label>Nuevo PIN de 4 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
       <button class="btn-primary" onclick="submitRecoveryFromModal()">Restablecer PIN</button>
       <button class="btn-secondary" onclick="showAccessMode('PIN')">Volver</button>
     </div>
@@ -611,7 +621,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <div class="modal-icon">🔐</div><h2>Acceso Admin</h2>
     <div class="pin-box"><label>Clave</label>
       <div class="pin-input-wrap">
-        <input id="gatePinInput" type="password" maxlength="40" placeholder="Clave de administrador">
+        <input id="gatePinInput" type="password" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="admin" data-lpignore="true" data-1p-ignore placeholder="Clave de administrador">
         <button type="button" class="pin-toggle" id="gatePinToggle" title="Mostrar/ocultar clave" onclick="toggleGatePinVisibility()">
           <svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
@@ -882,6 +892,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
       <p>Tu PIN de 4 dígitos identifica tu cuenta en todas las Pollas en las que uses el mismo nombre. Si te registras por tu cuenta, lo creas durante el registro. Si Manolo te agregó previamente, primero tendrás que introducir el <b>código de activación</b> que él te entregue y luego crearás tu PIN. Ese código sirve una sola vez. El PIN es personal e intransferible: no lo compartas.</p>
       <p>Si olvidas tu PIN, puedes usar tu <b>respuesta secreta</b> si la configuraste. También puedes pedirle a Manolo que lo restablezca; en ese caso recibirás un código temporal para crear un PIN nuevo sin perder puntos, pronósticos ni historial.</p>
       <p>Equivocarte de PIN no bloquea globalmente tu cuenta. Si el nombre ya pertenece a otra persona, la app te permitirá indicar que eres otra persona y tendrás que usar un nombre o apodo distinto.</p>
+      <p>El número de WhatsApp es <b>opcional</b>. Si decides registrarlo, se usará únicamente para comunicaciones relacionadas con LaPollaTICO (por ejemplo pagos, soporte, avisos o premios) y solo será visible para el administrador. Puedes actualizarlo o eliminarlo desde el pequeño botón 📱 de tu perfil.</p>
 
       <h3>⚽ Sistema de puntuación</h3>
       <ul>
@@ -1098,6 +1109,49 @@ const busyFlags = {};
 let incomingRefCode = '';
 let incomingPollaId = '';
 let deferredInstallPrompt = null; // evento beforeinstallprompt guardado para disparar la instalación al tocar el botón
+const LAST_PLAYER_NAME_KEY_ = 'tico:lastPlayerName';
+let myWhatsapp_ = '';
+const dirtyPredictionIds_ = new Set();
+const inflightMutationKeys_ = new Map();
+
+
+
+function humanError_(value, fallback='No se pudo completar la operación. Intenta nuevamente.'){
+  const msg = String(value || '').trim();
+  if(!msg) return fallback;
+  const low = msg.toLowerCase();
+  if(low.includes('failed to fetch') || low.includes('networkerror') || low.includes('network error') || low.includes('load failed') || low.includes('timeout') || low.includes('sin conexión')){
+    return 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+  }
+  if(/(^|\D)5\d\d(\D|$)/.test(msg) || low.includes('<!doctype') || low.includes('internal server') || low.includes('json')){
+    return fallback;
+  }
+  return msg;
+}
+function lastPlayerName_(){
+  try{return localStorage.getItem(LAST_PLAYER_NAME_KEY_) || '';}catch(_){return '';}
+}
+function rememberPlayerName_(name){
+  try{ if(name) localStorage.setItem(LAST_PLAYER_NAME_KEY_, String(name)); }catch(_){}
+}
+function hasUnsavedPredictions_(){ return dirtyPredictionIds_.size > 0; }
+function confirmDiscardUnsaved_(){
+  return !hasUnsavedPredictions_() || confirm('Tienes un pronóstico sin guardar. ¿Salir de todas formas?');
+}
+function updateConnectionBar_(){
+  const bar=document.getElementById('connectionBar');
+  if(!bar) return;
+  bar.classList.toggle('hidden', navigator.onLine);
+}
+window.addEventListener('offline', updateConnectionBar_);
+window.addEventListener('online', updateConnectionBar_);
+window.addEventListener('beforeunload', (ev)=>{
+  if(hasUnsavedPredictions_()){
+    ev.preventDefault();
+    ev.returnValue='';
+  }
+});
+document.addEventListener('DOMContentLoaded', updateConnectionBar_);
 
 let overlayStackCounter = 0;
 function openOverlay(id){
@@ -1253,18 +1307,20 @@ async function parseApiResponse_(res){
   // (por ejemplo WRONG_PIN / NOT_QUALIFIED), y esos se manejan arriba en la UI.
   // Un HTTP no-2xx sí se normaliza para no dejar errores opacos.
   if(!res.ok){
-    const msg =
+    const technical =
       (payload && payload.error) ||
       (payload && payload.message) ||
       `Error del servidor (${res.status})`;
-
+    const friendly = res.status >= 500
+      ? 'No se pudo completar la operación. Intenta nuevamente.'
+      : humanError_(technical, 'No se pudo completar la operación.');
     if(payload && typeof payload === 'object'){
       if(payload.ok === undefined) payload.ok = false;
-      if(!payload.error) payload.error = msg;
+      payload.technicalError = technical;
+      payload.error = friendly;
       return payload;
     }
-
-    return {ok:false, error:msg};
+    return {ok:false, error:friendly, technicalError:technical};
   }
 
   return payload;
@@ -1326,39 +1382,62 @@ function apiGetSilent(action, params={}){
 }
 
 async function apiPost(params, retriesLeft=2, silent=false){
-  if(!silent) showGlobalLoader();
-  try{
-    const res = await fetchWithTimeout_(
-      SUPABASE_FUNCTION_URL,
-      {
-        method:'POST',
-        headers:supabaseHeaders_(true),
-        body:JSON.stringify(params || {})
-      }
-    );
+  const action = String(params?.action || '');
+  const mutationActions = new Set([
+    'savePrediction','setParticipantPaid','addParticipants','addMatch','editMatch',
+    'submitResult','cancelAndReplaceMatch','addPolla','editPolla','deletePolla',
+    'archivePolla','desarchivarPolla','closeSeason','clearSeasonData',
+    'setSecurityAnswer','updateMyWhatsapp','resetPin','renameParticipant',
+    'splitParticipantIdentity','deleteParticipantFull'
+  ]);
+  const dedupeMutation = mutationActions.has(action);
+  const mutationKey = dedupeMutation ? JSON.stringify(params || {}) : '';
 
-    const result = await parseApiResponse_(res);
-
-    if(
-      result &&
-      !result.ok &&
-      retriesLeft > 0 &&
-      result.error &&
-      String(result.error).toLowerCase().includes('ocupado')
-    ){
-      await new Promise(r => setTimeout(r, 900 * (3 - retriesLeft)));
-      return apiPost(params, retriesLeft - 1, silent);
-    }
-
-    return result;
-  } catch(err){
-    return {
-      ok:false,
-      error:'Sin conexión con el servidor. Revisa tu internet e inténtalo de nuevo.'
-    };
-  } finally {
-    if(!silent) hideGlobalLoader();
+  if(dedupeMutation && inflightMutationKeys_.has(mutationKey)){
+    return inflightMutationKeys_.get(mutationKey);
   }
+
+  const job = (async()=>{
+    if(!silent) showGlobalLoader();
+    try{
+      const res = await fetchWithTimeout_(
+        SUPABASE_FUNCTION_URL,
+        {
+          method:'POST',
+          headers:supabaseHeaders_(true),
+          body:JSON.stringify(params || {})
+        }
+      );
+
+      const result = await parseApiResponse_(res);
+
+      if(
+        result &&
+        !result.ok &&
+        retriesLeft > 0 &&
+        result.error &&
+        String(result.error).toLowerCase().includes('ocupado')
+      ){
+        await new Promise(r => setTimeout(r, 900 * (3 - retriesLeft)));
+        return apiPost(params, retriesLeft - 1, silent);
+      }
+
+      return result;
+    } catch(err){
+      return {
+        ok:false,
+        error:'Sin conexión. Revisa tu internet e inténtalo nuevamente.'
+      };
+    } finally {
+      if(!silent) hideGlobalLoader();
+    }
+  })();
+
+  if(dedupeMutation){
+    inflightMutationKeys_.set(mutationKey, job);
+    job.finally(()=>{ if(inflightMutationKeys_.get(mutationKey)===job) inflightMutationKeys_.delete(mutationKey); });
+  }
+  return job;
 }
 
 function apiPostSilent(params){
@@ -1476,7 +1555,7 @@ async function sendAllPredictions(){
     btn.textContent = `Enviando ${sent + failed + 1} de ${selectedMatches.length}...`;
     try{
       const result = await apiPost({action:'savePrediction', matchId: m.id, name: authedName, home, away, pin: authedPin});
-      if(result.ok){ sent++; updateLocalPrediction(m.id, authedName, home, away); } else { failed++; }
+      if(result.ok){ sent++; updateLocalPrediction(m.id, authedName, home, away); dirtyPredictionIds_.delete(m.id); } else { failed++; }
     } catch(err){ failed++; }
   }
 
@@ -1496,7 +1575,27 @@ async function sendAllPredictions(){
 })();
 
 
-/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V19) ============ */
+/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V21) ============ */
+// Chrome/Edge suelen interpretar cualquier <input type="password"> como contraseña web.
+// Para los PIN internos de TICO usamos un campo de texto visualmente enmascarado SOLO
+// cuando el navegador soporta -webkit-text-security. En otros navegadores queda el
+// type=password original como fallback seguro.
+function configureSensitiveInputs_(){
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  document.querySelectorAll('[data-tico-sensitive]').forEach(input => {
+    input.setAttribute('autocomplete','off');
+    input.setAttribute('data-lpignore','true');
+    input.setAttribute('data-1p-ignore','true');
+    if(canMaskText){
+      input.type = 'text';
+      input.style.webkitTextSecurity = 'disc';
+      input.dataset.ticoMasked = '1';
+    }
+  });
+}
+configureSensitiveInputs_();
+
+/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V21) ============ */
 function showToast_(message){
   let toast = document.getElementById('ticoToast');
   if(!toast){
@@ -1534,7 +1633,13 @@ function parseScoreValue_(raw){
 }
 
 let matchesLoadFailed_ = false;
+let landingLoadFailed_ = false;
+
 window.addEventListener('online', () => {
+  // Si la portada o una Polla fallaron por conexión, reintentar al volver Internet.
+  if(landingLoadFailed_ && !currentPolla){
+    void initLanding();
+  }
   if(matchesLoadFailed_ && currentPolla){
     void loadMatches();
   }
@@ -1956,16 +2061,42 @@ async function shareImageOrFallback(blob, text, filename){
 
 /* ============ LANDING ============ */
 async function initLanding(){
-  document.getElementById('pollasContainer').innerHTML = '<div class="loading-msg">Cargando...</div>';
-  allPollas = await apiGet('getPollas').catch(()=>[]);
-  allPollasLoadedAt_ = Date.now();
-  renderLanding();
-  if(landingTimer) clearInterval(landingTimer);
-  landingTimer = setInterval(updateLandingCountdowns, 30000);
-  if(incomingPollaId){
-    const target = allPollas.find(p => p.id === incomingPollaId);
-    incomingPollaId = '';
-    if(target){ await enterPolla(target.id); }
+  const container = document.getElementById('pollasContainer');
+  container.innerHTML = '<div class="loading-msg">Cargando...</div>';
+  try{
+    const loaded = await apiGet('getPollas');
+    if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'Respuesta inválida del servidor');
+    allPollas = loaded;
+    allPollasLoadedAt_ = Date.now();
+    landingLoadFailed_ = false;
+    renderLanding();
+
+    if(landingTimer) clearInterval(landingTimer);
+    landingTimer = setInterval(updateLandingCountdowns, 30000);
+
+    // Si la URL recuerda una Polla (por refresh o enlace compartido), volver a ella.
+    if(incomingPollaId){
+      const requestedId = incomingPollaId;
+      const target = allPollas.find(p => String(p.id) === String(requestedId));
+      if(target){
+        incomingPollaId = '';
+        await enterPolla(target.id, true);
+      } else {
+        // La Polla ya no existe / no está disponible: volvemos a portada sin romper la app.
+        incomingPollaId = '';
+        history.replaceState(null, '', location.pathname);
+        showToast_('La Polla solicitada ya no está disponible.');
+      }
+    }
+  }catch(err){
+    landingLoadFailed_ = true;
+    container.innerHTML = `
+      <div class="no-pollas">
+        <div style="font-size:34px;margin-bottom:8px">📡</div>
+        <b>No se pudieron cargar las Pollas.</b><br>
+        <span style="opacity:.78">Revisa tu conexión a Internet.</span><br>
+        <button class="submit-btn secondary" style="margin-top:14px" onclick="initLanding()">🔄 Reintentar</button>
+      </div>`;
   }
 }
 // Refresca los "Cierre de inscripciones en..." de la lista de Pollas sin recargar
@@ -2008,6 +2139,8 @@ function renderLanding(){
   container.innerHTML = html;
 }
 function goToLanding(){
+  if(!confirmDiscardUnsaved_()) return;
+  dirtyPredictionIds_.clear();
   if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('landingScreen').classList.remove('hidden');
@@ -2018,10 +2151,29 @@ function goToLanding(){
   history.replaceState(null, '', location.pathname);
   initLanding();
 }
-async function enterPolla(pollaId){
+async function enterPolla(pollaId, restoreFromUrl=false){
   if(landingTimer){ clearInterval(landingTimer); landingTimer = null; }
   currentPolla = allPollas.find(p => p.id === pollaId);
-  if(!currentPolla) currentPolla = (await apiGet('getPollas')).find(p => p.id === pollaId);
+  if(!currentPolla){
+    const refreshed = await apiGet('getPollas');
+    if(!Array.isArray(refreshed)) throw new Error(refreshed?.error || 'No se pudo cargar la Polla');
+    allPollas = refreshed;
+    currentPolla = allPollas.find(p => String(p.id) === String(pollaId));
+  }
+  if(!currentPolla){
+    history.replaceState(null, '', location.pathname);
+    await initLanding();
+    showToast_('La Polla solicitada ya no está disponible.');
+    return;
+  }
+
+  // Mantener la Polla actual en la URL. Así un refresh vuelve a esta misma Polla.
+  const url = new URL(location.href);
+  url.searchParams.set('polla', currentPolla.id);
+  // El código de referido solo sirve para el ingreso inicial; no hace falta conservarlo.
+  url.searchParams.delete('ref');
+  history.replaceState(null, '', url.pathname + '?' + url.searchParams.toString());
+
   predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:currentPolla?.id||null,data:null,at:0}; selectedBulkMatches.clear();
   document.getElementById('landingScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
@@ -2037,7 +2189,7 @@ async function enterPolla(pollaId){
   //    Si el admin lo desactiva antes de finalizar, el botón se vuelve a
   //    ocultar (a menos que la Polla ya esté finalizada).
   updateWinnersButtonVisibility();
-  document.getElementById('playerName').value = '';
+  document.getElementById('playerName').value = lastPlayerName_();
   document.getElementById('inviteRow').classList.add('hidden');
   resetAuthUI();
   await loadMatches();
@@ -2173,6 +2325,8 @@ function resetAuthUI(){
   document.getElementById('inviteRow').classList.add('hidden');
   document.getElementById('bulkToggleRow').classList.add('hidden');
   document.getElementById('setSecurityAnswerBtn').classList.add('hidden');
+  document.getElementById('profileMiniActions').classList.add('hidden');
+  myWhatsapp_ = '';
   document.getElementById('payPendingBanner').classList.add('hidden');
   document.getElementById('myReferralCodeBox').classList.add('hidden');
 }
@@ -2377,6 +2531,35 @@ async function getMyParticipantStatus_(silent=false){
   return (silent ? apiPostSilent(req) : apiPost(req)).catch(()=>null);
 }
 
+async function configureMyWhatsapp(){
+  if(!authedName || !authedPin) return;
+  const current = myWhatsapp_ || '';
+  const shown = current.startsWith('51') && current.length===11 ? current.slice(2) : current;
+  const raw = prompt(
+    '📱 WhatsApp de contacto (opcional)\n\nSolo lo verá el administrador y se usará para comunicaciones relacionadas con LaPollaTICO.\n\nEscribe tu número o deja el campo vacío para eliminarlo:',
+    shown
+  );
+  if(raw === null) return;
+
+  const digits = String(raw).replace(/\D/g,'');
+  if(digits && !(digits.length === 9 || (digits.length >= 10 && digits.length <= 15))){
+    alert('Ingresa un número de WhatsApp válido o deja el campo vacío para eliminarlo.');
+    return;
+  }
+
+  const btn = document.getElementById('whatsappConfigBtn');
+  if(btn) btn.disabled = true;
+  try{
+    const result = await apiPost({action:'updateMyWhatsapp',name:authedName,pin:authedPin,whatsapp:raw});
+    if(!result.ok){ alert(humanError_(result.error,'No se pudo actualizar tu WhatsApp.')); return; }
+    myWhatsapp_ = result.whatsapp || '';
+    showToast_(myWhatsapp_ ? '✅ WhatsApp actualizado' : '✅ WhatsApp eliminado');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+
 async function checkMyPaymentStatus(){
   const banner = document.getElementById('payPendingBanner');
   // 🎁 La Polla gratuita no tiene inscripción paga, así que este aviso
@@ -2392,6 +2575,8 @@ async function checkMyPaymentStatus(){
 
 async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistration, newInThisPolla, needsSecurityAnswer, referralCode){
   authedName = realName; authedPin = pin;
+  rememberPlayerName_(authedName);
+  dirtyPredictionIds_.clear();
   document.getElementById('playerName').value = authedName;
   document.getElementById('nameField').classList.add('authed');
   document.getElementById('pinLockedBox').classList.add('hidden');
@@ -2424,6 +2609,9 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   }
 
   document.getElementById('setSecurityAnswerBtn').classList.toggle('hidden', !stillNeedsSecurityAnswer);
+  document.getElementById('profileMiniActions').classList.remove('hidden');
+  const myStatus = await getMyParticipantStatus_(true);
+  myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
   checkMyPaymentStatus();
 }
 
@@ -2868,7 +3056,7 @@ function buildMatchCard(m){
     else if(!authedName)        bodyHTML = renderLockedBody_(m, pollHTML);
     else                        bodyHTML = renderOpenBody_(m, mine, pollHTML);
 
-    return assembleCardShell_(m, bodyHTML, closed, closingSoon);
+    return assembleCardShell_(m, bodyHTML, closed, closingSoon, !!mine);
 }
 
 // Barra de "quién va ganando en las opiniones" (% de local/empate/visitante
@@ -3002,7 +3190,7 @@ function renderOpenBody_(m, mine, pollHTML){
 }
 
 /* ---- Envoltorio común: foto, ticket, número de partido, badges y el body que ya se armó arriba ---- */
-function assembleCardShell_(m, bodyHTML, closed, closingSoon){
+function assembleCardShell_(m, bodyHTML, closed, closingSoon, hasMine=false){
   const card = document.createElement('div');
   card.className = 'match' + (m.isStarMatch ? ' star-match' : '') + (m.isCanceled ? ' canceled-match' : '');
   card.id = 'card-' + m.id;
@@ -3026,7 +3214,8 @@ function assembleCardShell_(m, bodyHTML, closed, closingSoon){
           </div>
         </div>
         ${bodyHTML}
-      </div>`;
+      </div>
+      ${hasMine ? '<span class="saved-check" title="Pronóstico enviado">✓</span>' : ''}`;
   return card;
 }
 
@@ -3069,6 +3258,14 @@ function onScoreInput(matchId){
   if(homeEl && homeEl.value < 0) homeEl.value = 0;
   if(awayEl && awayEl.value < 0) awayEl.value = 0;
 
+  const mine=(predictionsCache[matchId]||[]).find(p=>authedName && normalizeName(p.name)===normalizeName(authedName));
+  const homeNow = parseScoreValue_(homeEl?.value ?? '');
+  const awayNow = parseScoreValue_(awayEl?.value ?? '');
+  const differs = homeNow === null || awayNow === null || !mine ||
+    Number(mine.home)!==homeNow || Number(mine.away)!==awayNow;
+  if(differs) dirtyPredictionIds_.add(matchId);
+  else dirtyPredictionIds_.delete(matchId);
+
   if(bulkMode){
     selectedBulkMatches.add(matchId);
     const cb = document.getElementById(`bulk-check-${matchId}`);
@@ -3098,12 +3295,13 @@ async function submitPrediction(matchId){
 
   const result = await apiPost({action:'savePrediction', matchId, name: authedName, home, away, pin: authedPin});
   if(!result.ok){
-    alert(result.error || 'No se pudo enviar.');
+    alert(humanError_(result.error, 'No se pudo guardar tu pronóstico. Intenta nuevamente.'));
     btn.disabled = false; btn.textContent = 'Enviar pronóstico';
     return;
   }
   const hadMineBefore = (predictionsCache[matchId] || []).some(p=>normalizeName(p.name)===normalizeName(authedName));
   updateLocalPrediction(matchId, authedName, home, away);
+  dirtyPredictionIds_.delete(matchId);
   if(adminPredictionSummaryPollaId===currentPolla.id && !hadMineBefore){
     adminPredictionSummaryCache[matchId] = Number(adminPredictionSummaryCache[matchId] || 0) + 1;
   }
@@ -3162,16 +3360,34 @@ const EYE_OPEN_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" heigh
 const EYE_CLOSED_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4 5 10 5c1.2 0 2.3-.2 3.3-.5M22 12s-1.6 2-4.2 3.5M12 17v3M6 15.5L4 18M18 15.5l2 2.5"/></svg>';
 function openAdminGate(){
   const input = document.getElementById('gatePinInput');
-  input.value=''; input.type='password';
+  input.value='';
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = 'disc';
+    input.dataset.ticoMasked = '1';
+  } else {
+    input.type = 'password';
+    input.dataset.ticoMasked = '1';
+  }
   document.getElementById('gatePinToggle').innerHTML = EYE_OPEN_SVG;
   openOverlay('adminGateOverlay');
 }
 function toggleGatePinVisibility(){
   const input = document.getElementById('gatePinInput');
   const btn = document.getElementById('gatePinToggle');
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  btn.innerHTML = show ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
   input.focus();
 }
 async function checkGatePin(){
@@ -3588,10 +3804,11 @@ async function renderParticipantsList(){
         <div class="info">
           ${escapeHtml(p.name)}
           <span class="ref-tag">${p.activationStatus==='ACTIVE'?'🟢 Activo':'🟡 Pendiente de activación'}</span>
-          <button class="pay-badge ${p.paid?'paid':'pending'}" onclick="toggleParticipantPaid('${jsAttr(p.name)}',${p.paid})">${p.paid?'✅ Pagó':'⏳ Pendiente'}</button>
+          <button class="pay-badge ${p.paid?'paid':'pending'}" onclick="toggleParticipantPaid('${jsAttr(p.name)}',${p.paid},this)">${p.paid?'✅ Pagó':'⏳ Pendiente'}</button>
           ${p.referredCount>0?`<span class="ref-tag">👥 invitó a ${p.referredCount}</span>`:''}
         </div>
         ${sportsLocked_()?'':`<div class="btn-row">
+          ${p.whatsapp?`<button class="icon-btn" title="Contactar por WhatsApp" onclick="openParticipantWhatsapp('${jsAttr(p.name)}','${jsAttr(p.whatsapp)}')">📱</button>`:''}
           ${p.activationStatus!=='ACTIVE'?`<button class="icon-btn" title="Regenerar código" onclick="regenerateActivation('${jsAttr(p.name)}')">🔄</button>`:''}
           <button class="icon-btn" title="Restablecer PIN" onclick="resetParticipantPin('${jsAttr(p.name)}')">🔑</button>
           <button class="icon-btn" title="Gestionar identidad" onclick="openIdentityManager('${jsAttr(p.name)}')">🪪</button>
@@ -3600,9 +3817,21 @@ async function renderParticipantsList(){
       </div>
     </div>`).join('');
 }
-async function toggleParticipantPaid(name, currentlyPaid){
-  const result=await apiPost({action:'setParticipantPaid',pollaId:currentPolla.id,name,paid:(!currentlyPaid).toString(),pin:adminPin,adminName:adminName});
-  if(!result.ok){alert(result.error||'No se pudo actualizar el pago.');return;} await renderParticipantsList();
+async function toggleParticipantPaid(name, currentlyPaid, btn=null){
+  if(btn) btn.disabled=true;
+  try{
+    const result=await apiPost({action:'setParticipantPaid',pollaId:currentPolla.id,name,paid:(!currentlyPaid).toString(),pin:adminPin,adminName:adminName});
+    if(!result.ok){alert(humanError_(result.error,'No se pudo actualizar el pago.'));return;}
+    await renderParticipantsList();
+  } finally {
+    if(btn && document.body.contains(btn)) btn.disabled=false;
+  }
+}
+function openParticipantWhatsapp(name, whatsapp){
+  const phone=String(whatsapp||'').replace(/\D/g,'');
+  if(!phone){ alert('Este participante no registró WhatsApp.'); return; }
+  const text=`Hola ${name} 👋 Te escribe Manolo de LaPollaTICO.`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`,'_blank');
 }
 function activationMessage(name,code){
   return `Hola ${name} 👋\nManolo ya te agregó a la Polla TICO #${currentPolla?.number||''}.\n\nTu código de activación es: ${code}\n\nEntra a la app, escribe tu nombre, coloca este código y crea tu PIN de 4 dígitos.`;
@@ -4389,7 +4618,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V19';
+const APP_VERSION = 'V21';
 let appUpdateWaiting = false;
 
 function showAppUpdateNotice(){
