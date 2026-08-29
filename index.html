@@ -484,7 +484,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
   </div>
   <div class="status-row"><div class="name-status" id="nameStatus"></div><span id="streakBadge" class="streak-badge hidden"></span></div>
   <div class="profile-mini-actions hidden" id="profileMiniActions">
-    <button class="profile-mini-btn hidden" id="setSecurityAnswerBtn" onclick="askForSecurityAnswer(authedName, authedPin)" title="Configurar recuperación de PIN" aria-label="Configurar recuperación de PIN">🔑</button>
+    <button class="profile-mini-btn hidden" id="setSecurityAnswerBtn" onclick="openRecoverySettings_()" title="Recuperación de PIN" aria-label="Configurar o cambiar recuperación de PIN">🔑</button>
     <button class="profile-mini-btn" id="whatsappConfigBtn" onclick="configureMyWhatsapp()" title="WhatsApp de contacto (opcional)" aria-label="WhatsApp de contacto opcional">📱</button>
   </div>
   <div class="pay-pending-banner hidden" id="payPendingBanner">PAGO PENDIENTE</div>
@@ -521,7 +521,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 
     <div id="accessPinBlock" class="hidden">
       <label>Tu PIN de 4 dígitos</label>
-      <input id="accessPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
+      <input id="accessPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitExistingLogin()">Entrar</button>
       <button class="btn-secondary" onclick="openRecoveryMode()">Olvidé mi PIN</button>
       <button class="btn-secondary" onclick="chooseOtherPerson()">Soy otra persona</button>
@@ -531,23 +531,53 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
       <label>Código brindado por Manolo</label>
       <input id="activationCodeInput" autocomplete="off" placeholder="TICO-XXXX">
       <label>Crea tu PIN de 4 dígitos</label>
-      <input id="activationPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
+      <input id="activationPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitActivation()">Activar y entrar</button>
     </div>
 
     <div id="accessRegisterBlock" class="hidden">
       <label>Nombre</label><input id="registerNameInput" autocomplete="off">
-      <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
+      <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <div id="registerReferralWrap"><label>Código de invitación (opcional)</label><input id="registerReferralInput" autocomplete="off" placeholder="TICOXXXX"></div>
       <button class="btn-primary" onclick="submitNewRegistration()">Registrarme</button>
     </div>
 
     <div id="accessRecoveryBlock" class="hidden">
       <label>Respuesta de seguridad</label><input id="recoveryAnswerInput" autocomplete="off">
-      <label>Nuevo PIN de 4 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="4" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••">
+      <label>Nuevo PIN de 4 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitRecoveryFromModal()">Restablecer PIN</button>
       <button class="btn-secondary" onclick="showAccessMode('PIN')">Volver</button>
     </div>
+  </div>
+</div>
+
+<!-- ======= RECUPERACIÓN DE PIN DEL JUGADOR ======= -->
+<div class="overlay" id="recoverySettingsOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="closeOverlay('recoverySettingsOverlay')">✕</button>
+    <div class="modal-icon">🔑</div>
+    <h2 id="recoverySettingsTitle">Recuperación de PIN</h2>
+    <p class="hint" id="recoverySettingsHint">Configura una respuesta secreta que puedas recordar.</p>
+
+    <label>Tu PIN actual</label>
+    <input id="recoveryCurrentPinInput"
+           type="text"
+           inputmode="numeric"
+           maxlength="4"
+           autocomplete="off"
+           autocapitalize="off"
+           spellcheck="false"
+           data-tico-sensitive="pin"
+           data-lpignore="true"
+           data-1p-ignore
+           style="-webkit-text-security:disc"
+           placeholder="••••">
+
+    <label id="recoveryNewAnswerLabel">Nueva respuesta secreta</label>
+    <input id="recoveryNewAnswerInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escribe tu respuesta">
+
+    <div id="recoverySettingsError" class="name-status err" style="margin-top:10px;"></div>
+    <button class="btn-primary" id="recoverySettingsSaveBtn" onclick="saveRecoverySettings_()">Guardar</button>
   </div>
 </div>
 
@@ -621,7 +651,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <div class="modal-icon">🔐</div><h2>Acceso Admin</h2>
     <div class="pin-box"><label>Clave</label>
       <div class="pin-input-wrap">
-        <input id="gatePinInput" type="password" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="admin" data-lpignore="true" data-1p-ignore placeholder="Clave de administrador">
+        <input id="gatePinInput" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="admin" data-lpignore="true" data-1p-ignore placeholder="Clave de administrador" style="-webkit-text-security:disc">
         <button type="button" class="pin-toggle" id="gatePinToggle" title="Mostrar/ocultar clave" onclick="toggleGatePinVisibility()">
           <svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
@@ -1109,8 +1139,9 @@ const busyFlags = {};
 let incomingRefCode = '';
 let incomingPollaId = '';
 let deferredInstallPrompt = null; // evento beforeinstallprompt guardado para disparar la instalación al tocar el botón
-const LAST_PLAYER_NAME_KEY_ = 'tico:lastPlayerName';
+const LAST_PLAYER_NAME_KEY_PREFIX_ = 'tico:lastPlayerName:';
 let myWhatsapp_ = '';
+let hasSecurityAnswer_ = false;
 const dirtyPredictionIds_ = new Set();
 const inflightMutationKeys_ = new Map();
 
@@ -1129,10 +1160,17 @@ function humanError_(value, fallback='No se pudo completar la operación. Intent
   return msg;
 }
 function lastPlayerName_(){
-  try{return localStorage.getItem(LAST_PLAYER_NAME_KEY_) || '';}catch(_){return '';}
+  try{
+    if(!currentPolla?.id) return '';
+    return localStorage.getItem(LAST_PLAYER_NAME_KEY_PREFIX_ + currentPolla.id) || '';
+  }catch(_){ return ''; }
 }
 function rememberPlayerName_(name){
-  try{ if(name) localStorage.setItem(LAST_PLAYER_NAME_KEY_, String(name)); }catch(_){}
+  try{
+    if(currentPolla?.id && name){
+      localStorage.setItem(LAST_PLAYER_NAME_KEY_PREFIX_ + currentPolla.id, String(name));
+    }
+  }catch(_){}
 }
 function hasUnsavedPredictions_(){ return dirtyPredictionIds_.size > 0; }
 function confirmDiscardUnsaved_(){
@@ -1574,8 +1612,15 @@ async function sendAllPredictions(){
   incomingRefCode = (params.get('ref') || '').toUpperCase();
 })();
 
+// Si se está restaurando una Polla tras refresh, no pintamos la portada ni un instante.
+if(incomingPollaId){
+  document.getElementById('landingScreen')?.classList.add('hidden');
+  document.getElementById('appScreen')?.classList.add('hidden');
+  showGlobalLoader();
+}
 
-/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V21) ============ */
+
+/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V22) ============ */
 // Chrome/Edge suelen interpretar cualquier <input type="password"> como contraseña web.
 // Para los PIN internos de TICO usamos un campo de texto visualmente enmascarado SOLO
 // cuando el navegador soporta -webkit-text-security. En otros navegadores queda el
@@ -1586,16 +1631,19 @@ function configureSensitiveInputs_(){
     input.setAttribute('autocomplete','off');
     input.setAttribute('data-lpignore','true');
     input.setAttribute('data-1p-ignore','true');
+    input.dataset.ticoMasked = '1';
     if(canMaskText){
       input.type = 'text';
       input.style.webkitTextSecurity = 'disc';
-      input.dataset.ticoMasked = '1';
+    } else {
+      // Fallback para navegadores que no soportan la máscara CSS.
+      input.type = 'password';
     }
   });
 }
 configureSensitiveInputs_();
 
-/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V21) ============ */
+/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V22) ============ */
 function showToast_(message){
   let toast = document.getElementById('ticoToast');
   if(!toast){
@@ -2085,11 +2133,13 @@ async function initLanding(){
         // La Polla ya no existe / no está disponible: volvemos a portada sin romper la app.
         incomingPollaId = '';
         history.replaceState(null, '', location.pathname);
+        document.getElementById('landingScreen').classList.remove('hidden');
         showToast_('La Polla solicitada ya no está disponible.');
       }
     }
   }catch(err){
     landingLoadFailed_ = true;
+    document.getElementById('landingScreen').classList.remove('hidden');
     container.innerHTML = `
       <div class="no-pollas">
         <div style="font-size:34px;margin-bottom:8px">📡</div>
@@ -2327,6 +2377,7 @@ function resetAuthUI(){
   document.getElementById('setSecurityAnswerBtn').classList.add('hidden');
   document.getElementById('profileMiniActions').classList.add('hidden');
   myWhatsapp_ = '';
+  hasSecurityAnswer_ = false;
   document.getElementById('payPendingBanner').classList.add('hidden');
   document.getElementById('myReferralCodeBox').classList.add('hidden');
 }
@@ -2512,16 +2563,92 @@ function chooseOtherPerson(){
 }
 
 async function askForSecurityAnswer(name, pin){
-  const answer = prompt('🔑 Elige una pregunta de seguridad para poder recuperar tu PIN tú mismo si algún día lo olvidas, sin tener que escribirle al administrador.\n\nEjemplo: tu equipo de fútbol favorito.\n\nEscribe tu respuesta secreta aquí:');
-  if(!answer || !answer.trim()) return false; // se puede configurar después, no es obligatorio
+  // Se conserva para el flujo inicial de alta. La llave seguirá disponible luego.
+  const answer = prompt('🔑 Configura tu recuperación de PIN.\n\nEjemplo de respuesta secreta: tu equipo de fútbol favorito.\n\nEscribe tu respuesta secreta aquí:');
+  if(!answer || !answer.trim()) return false;
   const result = await apiPost({action:'setSecurityAnswer', name, pin, securityAnswer: answer.trim()}).catch(()=>({ok:false}));
   if(result.ok){
-    alert('✅ ¡Listo! Ya podrás recuperar tu PIN tú mismo si lo olvidas.');
-    document.getElementById('setSecurityAnswerBtn').classList.add('hidden');
+    hasSecurityAnswer_ = true;
+    updateRecoveryButton_();
+    alert('✅ Recuperación configurada correctamente.');
     return true;
   } else {
-    alert('No se pudo guardar. Inténtalo de nuevo en un momento.');
+    alert(humanError_(result.error, 'No se pudo guardar la recuperación. Inténtalo nuevamente.'));
     return false;
+  }
+}
+
+function updateRecoveryButton_(){
+  const btn = document.getElementById('setSecurityAnswerBtn');
+  if(!btn) return;
+  btn.classList.remove('hidden');
+  btn.title = hasSecurityAnswer_ ? 'Cambiar recuperación de PIN' : 'Configurar recuperación de PIN';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function openRecoverySettings_(){
+  if(!authedName || !authedPin) return;
+  const title = document.getElementById('recoverySettingsTitle');
+  const hint = document.getElementById('recoverySettingsHint');
+  const save = document.getElementById('recoverySettingsSaveBtn');
+  const pinInput = document.getElementById('recoveryCurrentPinInput');
+  const answerInput = document.getElementById('recoveryNewAnswerInput');
+  const err = document.getElementById('recoverySettingsError');
+
+  title.textContent = hasSecurityAnswer_ ? 'Cambiar recuperación' : 'Configurar recuperación';
+  hint.textContent = hasSecurityAnswer_
+    ? 'Por seguridad, confirma tu PIN actual antes de reemplazar tu respuesta de recuperación.'
+    : 'Por seguridad, confirma tu PIN actual para configurar tu respuesta de recuperación.';
+  save.textContent = hasSecurityAnswer_ ? 'Guardar nueva recuperación' : 'Configurar recuperación';
+  pinInput.value = '';
+  answerInput.value = '';
+  err.textContent = '';
+  openOverlay('recoverySettingsOverlay');
+  setTimeout(()=>pinInput.focus(), 80);
+}
+
+async function saveRecoverySettings_(){
+  if(!authedName) return;
+  const pinInput = document.getElementById('recoveryCurrentPinInput');
+  const answerInput = document.getElementById('recoveryNewAnswerInput');
+  const err = document.getElementById('recoverySettingsError');
+  const btn = document.getElementById('recoverySettingsSaveBtn');
+  const typedPin = String(pinInput.value || '').trim();
+  const answer = String(answerInput.value || '').trim();
+
+  err.textContent = '';
+  if(!/^\d{4}$/.test(typedPin)){
+    err.textContent = 'Escribe tu PIN actual de 4 dígitos.';
+    return;
+  }
+  if(!answer){
+    err.textContent = 'Escribe una respuesta de recuperación.';
+    return;
+  }
+
+  btn.disabled = true;
+  try{
+    const result = await apiPost({
+      action:'setSecurityAnswer',
+      name:authedName,
+      pin:typedPin,
+      securityAnswer:answer
+    }).catch(()=>({ok:false,error:'Sin conexión'}));
+
+    if(!result.ok){
+      const raw = String(result.error || '');
+      err.textContent = raw.includes('verificar')
+        ? 'PIN incorrecto. No se modificó tu recuperación.'
+        : humanError_(raw, 'No se pudo actualizar la recuperación.');
+      return;
+    }
+
+    hasSecurityAnswer_ = true;
+    updateRecoveryButton_();
+    closeOverlay('recoverySettingsOverlay');
+    showToast_('✅ Recuperación actualizada');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -2608,7 +2735,8 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
     alert(`🎉 ¡Bienvenido, ${authedName}! Como ya tenías cuenta de otra Polla, usamos el mismo PIN y quedaste inscrito automáticamente en esta también.\n\n📲 Usa el botón "💬 Contactar al administrador" para avisarle a ${ADMIN_NAME} y completar tu inscripción.`);
   }
 
-  document.getElementById('setSecurityAnswerBtn').classList.toggle('hidden', !stillNeedsSecurityAnswer);
+  hasSecurityAnswer_ = !stillNeedsSecurityAnswer;
+  updateRecoveryButton_();
   document.getElementById('profileMiniActions').classList.remove('hidden');
   const myStatus = await getMyParticipantStatus_(true);
   myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
@@ -3362,13 +3490,12 @@ function openAdminGate(){
   const input = document.getElementById('gatePinInput');
   input.value='';
   const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  input.dataset.ticoMasked = '1';
   if(canMaskText){
     input.type = 'text';
     input.style.webkitTextSecurity = 'disc';
-    input.dataset.ticoMasked = '1';
   } else {
     input.type = 'password';
-    input.dataset.ticoMasked = '1';
   }
   document.getElementById('gatePinToggle').innerHTML = EYE_OPEN_SVG;
   openOverlay('adminGateOverlay');
@@ -3380,6 +3507,7 @@ function toggleGatePinVisibility(){
   const currentlyMasked = input.dataset.ticoMasked !== '0';
 
   if(canMaskText){
+    // Mantener type=text evita que Chrome vuelva a clasificarlo como contraseña web.
     input.type = 'text';
     input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
   } else {
@@ -4618,7 +4746,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V21';
+const APP_VERSION = 'V22';
 let appUpdateWaiting = false;
 
 function showAppUpdateNotice(){
