@@ -375,6 +375,15 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .system-health-ops-sub{font-size:11px;color:#66726c;font-weight:650;text-align:center;margin-top:4px;line-height:1.4;}
 .system-health-alerts{display:flex;flex-direction:column;gap:7px;margin-top:10px;}
 .system-health-alert{font-size:11px;line-height:1.4;border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.72);border:1px solid rgba(23,87,52,.09);color:#40534a;}
+.system-health-ready{margin-top:10px;border:1px solid rgba(23,87,52,.11);background:rgba(255,255,255,.72);border-radius:13px;padding:11px;}
+.system-health-ready-title{font-size:11px;font-weight:900;color:#315047;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px;text-align:center;}
+.system-health-check{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid rgba(23,87,52,.07);font-size:11px;color:#4c5c55;font-weight:700;}
+.system-health-check:first-of-type{border-top:0;}
+.system-health-check .status{font-weight:900;white-space:nowrap;}
+.system-health-check .status.ok{color:#287747;}
+.system-health-check .status.warn{color:#9b6d00;}
+.system-health-copy{display:flex;justify-content:center;margin-top:10px;}
+.system-health-copy button{width:auto;min-width:160px;margin:0;}
 @media(max-width:520px){.system-health-grid{grid-template-columns:1fr 1fr;}}
 
 .admin-session-mini{text-align:center;font-size:11px;color:#68776f;margin:0 0 10px;}
@@ -925,6 +934,8 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       <div class="system-health-grid" id="systemHealthLatency"></div>
       <div class="system-health-actions"><button class="btn-secondary" onclick="refreshSystemHealth_()">Revisar ahora</button></div>
       <div class="system-health-recent" id="systemHealthRecent"></div>
+      <div class="system-health-ready" id="systemHealthReadiness"></div>
+      <div class="system-health-copy"><button class="btn-secondary" onclick="copySystemDiagnosis_()">Copiar diagnóstico</button></div>
       <p class="hint" style="margin-top:10px;">Esta revisión es solo para Admin. No modifica datos ni consume recursos de forma continua.</p>
     </div>
 
@@ -4821,6 +4832,7 @@ function renderAdminOverview_(){
 }
 
 let systemHealthBusy_ = false;
+let latestSystemHealthSnapshot_ = null;
 function healthCard_(label, value, sub, good=true){
   return `<div class="system-health-card ${good?'good':'bad'}"><div class="k">${escapeHtml(label)}</div><div class="v">${escapeHtml(String(value ?? '—'))}</div><div class="s">${escapeHtml(sub || '')}</div></div>`;
 }
@@ -4886,6 +4898,54 @@ function renderOperationalHealth_(ctx={}){
   box.innerHTML=`<div class="system-health-ops-title">${title}</div><div class="system-health-ops-sub">${sub}</div>${alerts.length?`<div class="system-health-alerts">${alerts.slice(0,4).map(x=>`<div class="system-health-alert">${escapeHtml(x)}</div>`).join('')}</div>`:''}`;
 }
 
+function renderHealthReadiness_(ctx={}){
+  const box=document.getElementById('systemHealthReadiness');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const online=navigator.onLine !== false;
+  const checks=[
+    ['Conexión del dispositivo', online, online?'En línea':'Sin conexión'],
+    ['Versiones sincronizadas', !!ctx.versionsOk, ctx.versionsOk?'Correctas':'Revisar'],
+    ['Base de datos', !!ctx.dbOk, ctx.dbOk?'Disponible':'Revisar'],
+    ['Rendimiento reciente', (!samples.length || (apiMed<=1500 && dbMed<=800)), !samples.length?'Sin muestras':(apiMed<=1500 && dbMed<=800?'Estable':'Vigilar')],
+    ['Fallos técnicos recientes', recentTechnicalIssues_.length===0, recentTechnicalIssues_.length===0?'Ninguno':`${recentTechnicalIssues_.length} detectado${recentTechnicalIssues_.length===1?'':'s'}`],
+  ];
+  box.innerHTML=`<div class="system-health-ready-title">Chequeo para operar</div>${checks.map(([label,ok,status])=>`<div class="system-health-check"><span>${escapeHtml(label)}</span><span class="status ${ok?'ok':'warn'}">${ok?'✓ ':''}${escapeHtml(status)}</span></div>`).join('')}`;
+}
+
+async function copySystemDiagnosis_(){
+  const snap=latestSystemHealthSnapshot_ || {};
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const lines=[
+    `LaPollaTICO diagnóstico · ${APP_VERSION}`,
+    `Frontend: ${APP_VERSION}`,
+    `Service Worker: ${snap.swVersion || 'Sin revisar'}`,
+    `Backend: ${snap.backendVersion || 'Sin revisar'}`,
+    `Base de datos: ${snap.dbVersion || 'Sin revisar'}`,
+    `API: ${snap.apiMs != null ? snap.apiMs+' ms' : 'Sin revisar'}`,
+    `DB: ${snap.dbMs != null ? snap.dbMs+' ms' : 'Sin revisar'}`,
+    `Mediana reciente API/DB: ${samples.length ? `${apiMed} / ${dbMed} ms` : 'Sin muestras'}`,
+    `Última petición: ${lastApiRequestId_ || 'Ninguna'}`,
+    `Último error técnico: ${lastTechnicalIssue_?.requestId || 'Ninguno'}`,
+    `Conexión: ${navigator.onLine===false?'Offline':'Online'}`,
+    `Hora local: ${new Date().toLocaleString('es-PE')}`,
+  ];
+  const text=lines.join('\n');
+  try{
+    await navigator.clipboard.writeText(text);
+    if(typeof showToast==='function') showToast('Diagnóstico copiado.'); else alert('Diagnóstico copiado.');
+  }catch(_){
+    try{
+      const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      if(typeof showToast==='function') showToast('Diagnóstico copiado.'); else alert('Diagnóstico copiado.');
+    }catch(__){ alert(text); }
+  }
+}
+
 async function refreshSystemHealth_(){
   if(systemHealthBusy_) return;
   const state=document.getElementById('systemHealthState');
@@ -4895,6 +4955,7 @@ async function refreshSystemHealth_(){
   if(!state || !checked || !versions || !latency) return;
   renderRecentHealth_();
   renderOperationalHealth_();
+  renderHealthReadiness_();
   systemHealthBusy_=true;
   state.textContent='Revisando…';
   checked.textContent='Comprobando frontend, Service Worker, backend y base de datos.';
@@ -4916,6 +4977,8 @@ async function refreshSystemHealth_(){
       versions.innerHTML=healthCard_('Frontend',APP_VERSION,'Versión cargada',true)+healthCard_('Service Worker',swVersion,'Controlador actual',false);
       latency.innerHTML=healthCard_('Respuesta API',`${edgeMs} ms`,'Tiempo desde este dispositivo',false);
       renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
+      latestSystemHealthSnapshot_={swVersion,backendVersion:null,dbVersion:null,apiMs:edgeMs,dbMs:null};
+      renderHealthReadiness_({versionsOk:false,dbOk:false});
       return;
     }
 
@@ -4948,11 +5011,15 @@ async function refreshSystemHealth_(){
       healthCard_('Último error',lastTechnicalIssue_?.requestId || 'Ninguno',lastTechnicalIssue_ ? 'Referencia para soporte' : 'Sin errores técnicos en esta sesión',!lastTechnicalIssue_);
     renderRecentHealth_();
     renderOperationalHealth_({checked:true,frontOk,swOk,dbOk});
+    latestSystemHealthSnapshot_={swVersion,backendVersion,dbVersion,apiMs:edgeMs,dbMs,serverMs,checkedAt:Date.now()};
+    renderHealthReadiness_({versionsOk:allOk,dbOk:!!result.dbOk});
   }catch(err){
     state.textContent='⚠️ Sin respuesta';
     checked.textContent='No se pudo completar la revisión.';
     renderRecentHealth_();
     renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
+    latestSystemHealthSnapshot_={apiMs:null,dbMs:null};
+    renderHealthReadiness_({versionsOk:false,dbOk:false});
   }finally{
     systemHealthBusy_=false;
   }
@@ -5966,7 +6033,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25E4';
+const APP_VERSION = 'V25E5';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
