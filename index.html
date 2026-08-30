@@ -118,10 +118,14 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .status-row{display:flex; align-items:center; justify-content:center; gap:8px; margin:6px 0 12px; flex-wrap:wrap;}
 .pin-locked-box{background:rgba(214,69,69,0.12); border:1px solid var(--red-card); border-radius:12px; padding:12px 14px; text-align:center; font-size:12.5px; color:var(--chalk); margin-bottom:18px;}
 .pay-pending-banner{background:rgba(242,193,78,0.15); border:1px solid var(--floodlight); border-radius:12px; padding:10px 14px; text-align:center; font-size:12.5px; font-weight:700; color:var(--floodlight); margin-bottom:14px;}
-.profile-mini-actions{display:flex;justify-content:center;align-items:center;gap:8px;margin:-4px 0 12px;}
-.profile-mini-btn{width:34px;height:34px;border-radius:50%;border:1px solid rgba(242,193,78,.38);background:rgba(242,193,78,.08);color:var(--floodlight);font-size:16px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
-.profile-mini-btn:active{transform:scale(.96);}
-.saved-check{position:absolute;right:10px;bottom:7px;z-index:8;color:#8FD9AA;font-size:21px;font-weight:900;line-height:1;pointer-events:none;text-shadow:0 1px 5px rgba(0,0,0,.65);}
+.player-controls-row{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 16px;}
+.player-controls-row .bulk-toggle-row{margin:0;}
+.player-settings-btn{width:38px;height:38px;flex:0 0 38px;border-radius:50%;border:1px solid rgba(242,193,78,.55);background:rgba(242,193,78,.10);color:var(--floodlight);font-size:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
+.player-settings-btn:active{transform:scale(.96);}
+.player-settings-actions{display:grid;gap:10px;margin-top:14px;}
+.player-settings-action{width:100%;border:1px solid rgba(242,193,78,.28);background:rgba(242,193,78,.07);color:var(--chalk);border-radius:12px;padding:12px 14px;text-align:left;font:inherit;font-size:13px;font-weight:750;cursor:pointer;}
+.player-settings-action b{color:var(--floodlight);}
+.player-settings-referral{margin-top:12px;padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);text-align:center;color:rgba(246,243,234,.82);font-size:12.5px;}
 .connection-bar{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:999999;background:rgba(169,45,45,.97);color:white;border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:7px 13px;font-size:12px;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.28);}
 
 .pin-locked-box b{display:block; color:var(--red-card); margin-bottom:2px;}
@@ -139,12 +143,12 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .matches-view-tab.active{background:linear-gradient(135deg,#f3c552,#e8ad2f);color:#18231e;box-shadow:0 2px 10px rgba(138,95,11,.18);}
 .matches-view-tab .tab-count{margin-left:5px;font-size:11px;opacity:.72;font-weight:800;}
 .matches-view-empty{margin:22px 0 8px;text-align:center;padding:26px 18px;border:1px dashed rgba(12,39,32,.16);border-radius:16px;color:#18231e;background:rgba(255,255,255,.62);font-size:13.5px;line-height:1.45;}
-.prediction-progress{display:none;margin:-6px 0 18px;padding:12px 14px;border:1px solid rgba(12,39,32,.10);border-radius:14px;background:rgba(255,255,255,.58);color:#18231e;}
+.prediction-progress{display:none;margin:-4px 2px 18px;padding:2px 0 0;border:0;background:transparent;color:var(--chalk);}
 .prediction-progress.show{display:block;}
-.prediction-progress-top{display:flex;align-items:center;gap:10px;justify-content:space-between;}
-.prediction-progress-title{font-size:12.5px;font-weight:800;line-height:1.3;}
-.prediction-progress-title b{color:#a8750c;}
-.prediction-progress-next{border:0;background:transparent;color:#8b650f;font:inherit;font-size:11.5px;font-weight:800;padding:5px 0;cursor:pointer;white-space:nowrap;}
+.prediction-progress-top{display:flex;align-items:center;gap:12px;justify-content:space-between;}
+.prediction-progress-title{font-size:12.5px;font-weight:800;line-height:1.3;color:var(--chalk);}
+.prediction-progress-title b{color:var(--floodlight);}
+.prediction-progress-next{border:0;background:transparent;color:var(--floodlight);font:inherit;font-size:11.5px;font-weight:800;padding:5px 0;cursor:pointer;white-space:nowrap;}
 .prediction-progress-track{height:5px;border-radius:999px;background:rgba(12,39,32,.10);overflow:hidden;margin-top:9px;}
 .prediction-progress-fill{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#e8ad2f,#f3c552);transition:width .2s ease;}
 .status-line.pending{color:#d8a62c;font-weight:800;}
@@ -500,21 +504,17 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <button class="check-btn" onclick="checkName()" title="Confirmar">✓</button>
   </div>
   <div class="status-row"><div class="name-status" id="nameStatus"></div><span id="streakBadge" class="streak-badge hidden"></span></div>
-  <div class="profile-mini-actions hidden" id="profileMiniActions">
-    <button class="profile-mini-btn hidden" id="setSecurityAnswerBtn" onclick="openRecoverySettings_()" title="Recuperación de PIN" aria-label="Configurar o cambiar recuperación de PIN">🔑</button>
-    <button class="profile-mini-btn" id="whatsappConfigBtn" onclick="configureMyWhatsapp()" title="WhatsApp de contacto (opcional)" aria-label="WhatsApp de contacto opcional">📱</button>
-  </div>
   <div class="pay-pending-banner hidden" id="payPendingBanner">PAGO PENDIENTE</div>
   <div class="pin-locked-box hidden" id="pinLockedBox"></div>
 
-  <div class="invite-row hidden" id="inviteRow"><button onclick="inviteFriends()">🎁 Invitar amigos</button></div>
-  <div class="hint hidden" id="myReferralCodeBox" style="text-align:center; margin-top:-8px; margin-bottom:8px;"></div>
-
-  <div class="bulk-toggle-row hidden" id="bulkToggleRow">
-    <label class="bulk-toggle">
-      <input type="checkbox" id="bulkModeCheckbox" onchange="toggleBulkMode()">
-      📦 Activar envío masivo por casillas
-    </label>
+  <div class="player-controls-row hidden" id="playerControlsRow">
+    <div class="bulk-toggle-row" id="bulkToggleRow">
+      <label class="bulk-toggle">
+        <input type="checkbox" id="bulkModeCheckbox" onchange="toggleBulkMode()">
+        📦 Activar envío masivo por casillas
+      </label>
+    </div>
+    <button class="player-settings-btn" id="playerSettingsBtn" type="button" onclick="openPlayerSettings_()" title="Configuración" aria-label="Abrir configuración">⚙️</button>
   </div>
 
   <div class="matches-view-tabs" id="matchesViewTabs" role="tablist" aria-label="Partidos de la Polla">
@@ -580,6 +580,21 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 </div>
 
 <!-- ======= RECUPERACIÓN DE PIN DEL JUGADOR ======= -->
+<div class="overlay" id="playerSettingsOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="closeOverlay('playerSettingsOverlay')">✕</button>
+    <div class="modal-icon">⚙️</div>
+    <h2>Tu cuenta</h2>
+    <p class="hint">Accesos rápidos de tu perfil</p>
+    <div class="player-settings-actions">
+      <button class="player-settings-action hidden" id="setSecurityAnswerBtn" onclick="closeOverlay('playerSettingsOverlay');openRecoverySettings_()"><b>🔑 Recuperación de PIN</b><br><span id="recoverySettingsActionHint">Configurar o cambiar recuperación</span></button>
+      <button class="player-settings-action" id="whatsappConfigBtn" onclick="closeOverlay('playerSettingsOverlay');configureMyWhatsapp()"><b>📱 WhatsApp de contacto</b><br>Agregar, cambiar o eliminar tu número</button>
+      <button class="player-settings-action" onclick="closeOverlay('playerSettingsOverlay');inviteFriends()"><b>🎁 Invitar amigos</b><br>Compartir tu enlace de invitación</button>
+    </div>
+    <div class="player-settings-referral hidden" id="myReferralCodeBox"></div>
+  </div>
+</div>
+
 <div class="overlay" id="recoverySettingsOverlay">
   <div class="modal">
     <button class="close-x" onclick="closeOverlay('recoverySettingsOverlay')">✕</button>
@@ -2484,10 +2499,9 @@ function resetAuthUI(){
   document.getElementById('nameStatus').className = 'name-status';
   document.getElementById('streakBadge').classList.add('hidden');
   document.getElementById('pinLockedBox').classList.add('hidden');
-  document.getElementById('inviteRow').classList.add('hidden');
-  document.getElementById('bulkToggleRow').classList.add('hidden');
+  document.getElementById('playerControlsRow').classList.add('hidden');
+  document.getElementById('bulkToggleRow').classList.remove('hidden');
   document.getElementById('setSecurityAnswerBtn').classList.add('hidden');
-  document.getElementById('profileMiniActions').classList.add('hidden');
   myWhatsapp_ = '';
   hasSecurityAnswer_ = false;
   document.getElementById('payPendingBanner').classList.add('hidden');
@@ -2704,6 +2718,8 @@ function updateRecoveryButton_(){
   btn.classList.remove('hidden');
   btn.title = hasSecurityAnswer_ ? 'Cambiar recuperación de PIN' : 'Configurar recuperación de PIN';
   btn.setAttribute('aria-label', btn.title);
+  const hint=document.getElementById('recoverySettingsActionHint');
+  if(hint) hint.textContent = hasSecurityAnswer_ ? 'Cambiar tu respuesta de recuperación' : 'Configurar tu recuperación';
 }
 
 function openRecoverySettings_(){
@@ -2827,8 +2843,8 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   document.getElementById('playerName').value = authedName;
   document.getElementById('nameField').classList.add('authed');
   document.getElementById('pinLockedBox').classList.add('hidden');
-  document.getElementById('inviteRow').classList.remove('hidden');
-  document.getElementById('bulkToggleRow').classList.remove('hidden');
+  document.getElementById('playerControlsRow').classList.remove('hidden');
+  document.getElementById('bulkToggleRow').classList.toggle('hidden', matchesView_ === 'resolved');
   statusEl.textContent = registered ? '✓ ¡Bienvenido! PIN creado correctamente.' : `✓ Bienvenido de nuevo, ${authedName}`;
   statusEl.className = 'name-status ok';
   await refreshMyPredictions();
@@ -2859,7 +2875,6 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
 
   hasSecurityAnswer_ = !stillNeedsSecurityAnswer;
   updateRecoveryButton_();
-  document.getElementById('profileMiniActions').classList.remove('hidden');
   const myStatus = await getMyParticipantStatus_(true);
   myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
   checkMyPaymentStatus();
@@ -2869,6 +2884,12 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
 // Si todavía no lo tenemos en memoria (p.ej. sesiones viejas que quedaron
 // abiertas desde antes de este cambio), lo busca una sola vez entre los
 // participantes ya cargados, igual que hacía inviteFriends() antes.
+function openPlayerSettings_(){
+  if(!authedName) return;
+  renderMyReferralCode_();
+  openOverlay('playerSettingsOverlay');
+}
+
 async function renderMyReferralCode_(){
   const box = document.getElementById('myReferralCodeBox');
   if(!box) return;
@@ -3252,7 +3273,7 @@ function updatePredictionProgress_(){
   const sent=relevant.filter(m=>(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))).length;
   const pendingOpen=relevant.filter(m=>!isClosed(m.closeAt) && (dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))));
   const pct=Math.round(sent*100/relevant.length);
-  text.innerHTML=`Tus pronósticos <b>${sent}/${relevant.length}</b> enviados`;
+  text.innerHTML=`Tus pronósticos enviados <b>${sent}/${relevant.length}</b>`;
   fill.style.width=`${pct}%`;
   next.classList.toggle('hidden', pendingOpen.length===0);
   box.classList.add('show');
@@ -3278,7 +3299,7 @@ function refreshPredictionStatus_(matchId){
   const el=document.getElementById(`status-${matchId}`);
   if(el){ el.textContent=state.text; el.classList.toggle('pending',state.cls==='pending'); el.classList.toggle('saved',state.cls==='saved'); }
   const btn=document.getElementById(`submit-${matchId}`);
-  if(btn && dirtyPredictionIds_.has(matchId)) btn.textContent=mine?'Guardar cambio':'Enviar pronóstico';
+  if(btn) btn.textContent = mine ? (dirtyPredictionIds_.has(matchId) ? 'Guardar cambio' : 'Actualizar pronóstico') : 'Enviar pronóstico';
   updatePredictionProgress_();
 }
 
@@ -3603,7 +3624,7 @@ function assembleCardShell_(m, bodyHTML, closed, closingSoon, hasMine=false){
         </div>
         ${bodyHTML}
       </div>
-      ${hasMine ? '<span class="saved-check" title="Pronóstico enviado">✓</span>' : ''}`;
+      `;
   return card;
 }
 
@@ -5013,8 +5034,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25B1';
-const LAST_APPLIED_SW_KEY_ = 'tico:lastAppliedServiceWorkerVersion';
+const APP_VERSION = 'V25B1.1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
@@ -5044,19 +5064,21 @@ function getWorkerVersion_(worker){
 
 async function offerWaitingWorker_(reg){
   const waiting = reg?.waiting;
-  if(!waiting || !navigator.serviceWorker.controller) return;
+  const controller = navigator.serviceWorker.controller;
+  if(!waiting || !controller) return;
 
-  // Preguntamos al propio SW qué versión es. Evita volver a ofrecer exactamente
-  // la misma actualización después de la recarga o durante propagación de GitHub.
-  const waitingVersion = await getWorkerVersion_(waiting);
-  if(waitingVersion && waitingVersion === APP_VERSION) return;
+  // La versión correcta para comparar es la que CONTROLA esta pestaña, no la
+  // versión del HTML. GitHub puede entregar el index nuevo antes de que el SW
+  // nuevo tome control; comparar contra APP_VERSION ocultaba el aviso en ese caso.
+  const [waitingVersion, controllerVersion] = await Promise.all([
+    getWorkerVersion_(waiting),
+    getWorkerVersion_(controller)
+  ]);
+  if(waitingVersion && controllerVersion && waitingVersion === controllerVersion) return;
+  const identity = waitingVersion || `${waiting.scriptURL || 'waiting'}:${waiting.state}`;
+  if(identity === offeredWorkerVersion_) return;
 
-  let lastApplied = '';
-  try{ lastApplied = sessionStorage.getItem(LAST_APPLIED_SW_KEY_) || ''; }catch(_){}
-  if(waitingVersion && waitingVersion === lastApplied) return;
-  if(waitingVersion && waitingVersion === offeredWorkerVersion_) return;
-
-  offeredWorkerVersion_ = waitingVersion || 'unknown';
+  offeredWorkerVersion_ = identity;
   showAppUpdateNotice(waitingVersion);
 }
 
@@ -5092,11 +5114,6 @@ function showAppUpdateNotice(waitingVersion=''){
       appUpdateRegistration?.update().catch(()=>{});
       return;
     }
-
-    const confirmedVersion = waitingVersion || await getWorkerVersion_(waiting);
-    try{
-      if(confirmedVersion) sessionStorage.setItem(LAST_APPLIED_SW_KEY_, confirmedVersion);
-    }catch(_){}
 
     appUpdateApplying = true;
     const btn = document.getElementById('applyAppUpdateBtn');
