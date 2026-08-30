@@ -1034,6 +1034,12 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
           <button class="btn-secondary" id="compactionRunBtn" style="margin-top:10px;" onclick="compactPollaV2_()">🗜️ Compactar datos históricos</button>
           <p class="hint" style="margin:8px 0 0;">F4 compacta filas pesadas de Postgres y conserva un snapshot histórico completo. Las imágenes originales todavía se conservan; su limpieza segura se hará en la siguiente capa.</p>
         </div>
+        <div class="compaction-precheck" style="margin-top:10px;">
+          <div class="compaction-precheck-title"><span>Limpieza de imágenes</span><span id="storageCleanupBadge" class="secure-backup-badge">Pendiente</span></div>
+          <div id="storageCleanupStatus" class="hint" style="margin-top:8px;color:#111;">F5 elimina únicamente las imágenes originales del bucket operativo después de volver a verificar el ZIP seguro.</div>
+          <button class="btn-secondary" id="storageCleanupBtn" style="margin-top:10px;" onclick="cleanupCompactedStorage_()">🧹 Limpiar imágenes respaldadas</button>
+          <p class="hint" style="margin:8px 0 0;color:#111;">El ZIP privado y el snapshot histórico no se eliminan. Las imágenes externas que no pertenecen a Supabase se conservan.</p>
+        </div>
         <p class="hint" style="margin-top:10px;">Solo se puede generar cuando la Polla está finalizada y archivada. El ZIP se guarda en Storage privado y además se descarga mediante un enlace temporal.</p>
       </div>
       <h3 style="margin-top:18px;">Respaldo JSON manual</h3>
@@ -1405,7 +1411,9 @@ const ADMIN_SESSION_ACTIONS_ = new Set([
   'addPolla','editPolla','deletePolla','addMatch','editMatch','deleteMatch','cancelAndReplaceMatch',
   'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion',
   'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
-  'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','closeSeason','clearSeasonData',
+  'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
+  'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
+  'getStorageCleanupStatus','cleanupCompactedPollaStorage','closeSeason','clearSeasonData',
   'archivePolla','desarchivarPolla','editArchivedPremios','getAdminMatchPredictions','getAdminAllPredictions',
   'getAdminPredictionSummary','setAppConfig','getSystemHealth'
 ]);
@@ -4821,7 +4829,7 @@ function switchAdminTab(tabId){
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
   if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
   if(tabId === 'tabSalud') refreshSystemHealth_();
-  if(tabId === 'tabDatos') refreshSecureBackupStatus_(false);
+  if(tabId === 'tabDatos'){ refreshSecureBackupStatus_(false); refreshStorageCleanupStatus_(false); }
 }
 
 function renderAdminOverview_(){
@@ -5686,6 +5694,7 @@ async function refreshSecureBackupStatus_(showErrors=false){
     if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el respaldo.');
     renderSecureBackupStatus_(result);
     await refreshCompactionSealStatus_(false);
+    await refreshStorageCleanupStatus_(false);
   }catch(e){
     if(box) box.textContent='No se pudo verificar el estado del respaldo.';
     if(showErrors) alert(e?.message||'No se pudo revisar el respaldo.');
@@ -5818,6 +5827,106 @@ async function compactPollaV2_(){
   allPollas=await apiGet('getPollas').catch(()=>allPollas);
   const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
   alert('✅ Compactación V2 completada dentro de una transacción. El histórico, el respaldo seguro y la acumulada anual quedaron conservados.');
+}
+
+function renderStorageCleanupStatus_(result){
+  const badge=document.getElementById('storageCleanupBadge');
+  const status=document.getElementById('storageCleanupStatus');
+  const btn=document.getElementById('storageCleanupBtn');
+  if(!badge||!status||!btn) return;
+  badge.style.color='#111';
+  status.style.color='#111';
+  if(!result?.compacted){
+    badge.textContent='Aún no';
+    badge.className='secure-backup-badge';
+    status.textContent='Primero debe completarse la compactación V2. F5 no puede limpiar imágenes antes de que exista un histórico protegido.';
+    btn.disabled=true;
+    return;
+  }
+  if(result.cleaned){
+    badge.textContent='✓ Limpio';
+    badge.className='secure-backup-badge ok';
+    badge.style.color='#111';
+    const when=result.cleanedAt?fmtDate(result.cleanedAt):'fecha no disponible';
+    status.textContent=`Limpieza completada ${when}. ${Number(result.removedCount)||0} archivo(s) del bucket operativo eliminados; ${Number(result.skippedCount)||0} imagen(es) externa(s) conservadas.`;
+    btn.disabled=true;
+    btn.textContent='✓ Imágenes ya limpiadas';
+    return;
+  }
+  if(result.status==='partial'){
+    badge.textContent='Revisar';
+    badge.className='secure-backup-badge';
+    status.textContent='Una limpieza anterior no terminó completamente. Puedes reintentar: el servidor volverá a verificar el ZIP antes de continuar.';
+    btn.disabled=false;
+    btn.textContent='🧹 Reintentar limpieza segura';
+    return;
+  }
+  badge.textContent='Pendiente';
+  badge.className='secure-backup-badge';
+  status.textContent='La Polla ya está compactada. F5 volverá a verificar tamaño, SHA-256 y contenido del ZIP antes de borrar imágenes del bucket tico-images.';
+  btn.disabled=false;
+  btn.textContent='🧹 Limpiar imágenes respaldadas';
+}
+
+async function refreshStorageCleanupStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getStorageCleanupStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar la limpieza de imágenes.');
+    renderStorageCleanupStatus_(result);
+  }catch(e){
+    const status=document.getElementById('storageCleanupStatus');
+    if(status){status.style.color='#111';status.textContent='No se pudo revisar el estado de limpieza.';}
+    if(showErrors) alert(e?.message||'No se pudo revisar el estado de limpieza.');
+  }
+}
+
+async function cleanupCompactedStorage_(){
+  if(!currentPolla) return;
+  const state=await apiPostSilent({action:'getStorageCleanupStatus',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!state?.ok || !state.compacted){
+    alert('⛔ Primero debes completar la compactación V2 de esta Polla.');
+    return;
+  }
+  if(state.cleaned){
+    alert('✓ Las imágenes operativas de esta Polla ya fueron limpiadas.');
+    renderStorageCleanupStatus_(state);
+    return;
+  }
+  const msg=`Confirma tu clave para limpiar las imágenes operativas de la Polla #${currentPolla.number}. Antes de borrar, el servidor volverá a descargar y verificar el ZIP seguro completo.`;
+  const result=await withSensitiveAdminConfirmation_('cleanupCompactedPollaStorage',msg,async()=>{
+    if(!confirm(`🧹 LIMPIEZA SEGURA — Polla #${currentPolla.number}
+
+Se eliminarán del bucket tico-images únicamente los archivos que ya están incluidos en el ZIP verificado.
+
+El ZIP privado, el histórico protegido, los puntos, ganadores y jugadores NO se borrarán.
+
+¿Continuar?`)) return null;
+    const btn=document.getElementById('storageCleanupBtn');
+    const old=btn?.textContent;
+    if(btn){btn.disabled=true;btn.textContent='Verificando ZIP y limpiando…';}
+    try{
+      return await apiPost({action:'cleanupCompactedPollaStorage',pollaId:currentPolla.id,adminName:adminName});
+    }finally{
+      if(btn){btn.disabled=false;btn.textContent=old||'🧹 Limpiar imágenes respaldadas';}
+    }
+  });
+  if(!result) return;
+  if(!result.ok){
+    alert(result.error||'La limpieza no pudo completarse. El respaldo y el histórico siguen protegidos.');
+    await refreshStorageCleanupStatus_(false);
+    return;
+  }
+  await refreshStorageCleanupStatus_(false);
+  allPollas=await apiGet('getPollas').catch(()=>allPollas);
+  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  renderLanding();
+  alert(`✅ Limpieza F5 completada.
+
+${Number(result.removedCount)||0} archivo(s) de Storage eliminados.
+${Number(result.skippedCount)||0} imagen(es) externa(s) conservadas.
+
+El ZIP seguro y el histórico compacto permanecen intactos.`);
 }
 
 async function createSecurePollaBackup_(){
@@ -6278,7 +6387,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F4.3';
+const APP_VERSION = 'V25F5';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
