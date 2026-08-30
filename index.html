@@ -118,23 +118,26 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .status-row{display:flex; align-items:center; justify-content:center; gap:8px; margin:6px 0 12px; flex-wrap:wrap;}
 .pin-locked-box{background:rgba(214,69,69,0.12); border:1px solid var(--red-card); border-radius:12px; padding:12px 14px; text-align:center; font-size:12.5px; color:var(--chalk); margin-bottom:18px;}
 .pay-pending-banner{background:rgba(242,193,78,0.15); border:1px solid var(--floodlight); border-radius:12px; padding:10px 14px; text-align:center; font-size:12.5px; font-weight:700; color:var(--floodlight); margin-bottom:14px;}
-.app-mode-banner{position:sticky;top:0;z-index:90;margin:0 auto 10px;max-width:600px;padding:9px 14px;border-radius:0 0 12px 12px;background:#7a2f2f;color:#fff;font-size:12.5px;font-weight:800;text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.24);}
+.app-mode-banner{position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:95;width:min(600px,calc(100% - 16px));margin:0;padding:9px 14px;border-radius:12px;background:#7a2f2f;color:#fff;font-size:12.5px;font-weight:800;text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.24);pointer-events:none;}
 .app-mode-banner.warn{background:#72520d;color:#fff7db;}
-.admin-control-box{background:linear-gradient(180deg,#f8f5ea 0%,#f3efdf 100%);border:1px solid #d9cfaa;border-radius:16px;padding:14px;margin:12px 0 8px;color:#18231f;box-shadow:0 6px 18px rgba(0,0,0,.06);}
-.admin-control-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
-.admin-control-head h3{margin:0;font-size:16px;color:#17382c;}
-.admin-control-head p{margin:3px 0 0;font-size:11.5px;line-height:1.35;color:#66716b;font-weight:650;}
-.admin-control-status{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:5px 9px;border-radius:999px;background:#fff8d8;border:1px solid #dfcb71;font-size:11px;font-weight:850;color:#67540d;white-space:nowrap;}
-.admin-control-list{display:grid;gap:8px;margin:8px 0 12px;}
-.admin-control-toggle{display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 11px;background:rgba(255,255,255,.72);border:1px solid rgba(23,56,44,.10);border-radius:12px;cursor:pointer;}
-.admin-control-toggle .control-copy{display:flex;flex-direction:column;gap:2px;}
+.admin-control-box{background:linear-gradient(180deg,#faf7ec 0%,#f3eedc 100%);border:1px solid #d8c98e;border-radius:18px;padding:15px;margin:14px 0 10px;color:#18231f;box-shadow:0 8px 22px rgba(0,0,0,.07);}
+.admin-control-head{display:block;text-align:center;margin-bottom:12px;}
+.admin-control-head h3{margin:0;font-size:17px;color:#17382c;letter-spacing:.1px;}
+.admin-control-head p{max-width:430px;margin:5px auto 9px;font-size:11.5px;line-height:1.45;color:#66716b;font-weight:650;}
+.admin-control-status{display:flex;align-items:center;justify-content:center;min-height:30px;width:100%;padding:6px 10px;border-radius:10px;background:#fff8d8;border:1px solid #dfcb71;font-size:11.5px;font-weight:850;color:#67540d;}
+.admin-control-list{display:grid;gap:9px;margin:10px 0 13px;}
+.admin-control-toggle{display:grid;grid-template-columns:minmax(0,1fr) 46px;align-items:center;gap:14px;padding:12px 13px;background:#fff;border:1px solid rgba(23,56,44,.11);border-radius:13px;cursor:pointer;box-shadow:0 2px 7px rgba(20,35,29,.035);}
+.admin-control-toggle .control-copy{display:flex;flex-direction:column;gap:3px;text-align:left;min-width:0;}
 .admin-control-toggle .control-title{font-size:13px;font-weight:850;color:#18231f;}
-.admin-control-toggle .control-sub{font-size:11px;line-height:1.3;color:#6d746f;font-weight:600;}
-.admin-control-toggle input{width:20px;height:20px;accent-color:#17382c;margin:0;}
-.admin-control-message{margin-top:4px;padding-top:10px;border-top:1px solid rgba(23,56,44,.10);}
-.admin-control-message label{display:block;margin:0 0 5px;font-size:12px;font-weight:800;color:#27332e;}
-.admin-control-box textarea{min-height:64px;margin:0;background:#fff;color:#111;border-radius:10px;}
-.admin-control-save{margin-top:10px!important;margin-bottom:0!important;}
+.admin-control-toggle .control-sub{font-size:11px;line-height:1.35;color:#6d746f;font-weight:600;}
+.admin-control-toggle input{appearance:none;-webkit-appearance:none;width:44px;height:24px;border:0;border-radius:999px;background:#c7ccc9;position:relative;margin:0;cursor:pointer;transition:background .18s ease;}
+.admin-control-toggle input::after{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .18s ease;}
+.admin-control-toggle input:checked{background:#c99a24;}
+.admin-control-toggle input:checked::after{transform:translateX(20px);}
+.admin-control-message{margin-top:4px;padding:12px;background:rgba(255,255,255,.64);border:1px solid rgba(23,56,44,.09);border-radius:13px;}
+.admin-control-message label{display:block;margin:0 0 6px;font-size:12px;font-weight:800;color:#27332e;text-align:left;}
+.admin-control-box textarea{min-height:66px;margin:0;background:#fff;color:#111;border-radius:10px;border-color:rgba(23,56,44,.14);}
+.admin-control-save{display:block;width:100%;margin:11px 0 0!important;}
 .player-controls-row{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 16px;}
 .player-controls-row .bulk-toggle-row{margin:0;}
 .player-settings-btn{width:38px;height:38px;flex:0 0 38px;border-radius:50%;border:1px solid rgba(242,193,78,.55);background:rgba(242,193,78,.10);color:var(--floodlight);font-size:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
@@ -764,6 +767,26 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     </div>
     <button class="btn-primary" id="adminConfirmBtn" onclick="submitAdminConfirmation_()">Confirmar</button>
     <button class="btn-secondary" onclick="cancelAdminConfirmation_()">Cancelar</button>
+  </div>
+</div>
+
+<!-- ======= ADMIN: RENOVAR SESIÓN ======= -->
+<div class="overlay" id="adminRenewOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="cancelAdminRenew_()">✕</button>
+    <div class="modal-icon">🔐</div>
+    <h2>Renovar sesión Admin</h2>
+    <p class="hint" style="text-align:center;margin-bottom:14px;">Tu sesión de 30 minutos venció. Ingresa tu clave para continuar sin salir del panel.</p>
+    <div class="pin-box"><label>Clave de administrador</label>
+      <div class="pin-input-wrap">
+        <input id="adminRenewPinInput" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="admin" data-lpignore="true" data-1p-ignore placeholder="Clave de administrador" style="-webkit-text-security:disc">
+        <button type="button" class="pin-toggle" id="adminRenewPinToggle" title="Mostrar/ocultar clave" onclick="toggleAdminRenewPinVisibility_()">
+          <svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn-primary" id="adminRenewBtn" onclick="submitAdminRenew_()">Renovar 30 min</button>
+    <button class="btn-secondary" onclick="cancelAdminRenew_()">Cancelar</button>
   </div>
 </div>
 
@@ -1426,18 +1449,20 @@ let adminSessionCountdownTimer_ = null;
 function updateAdminSessionCountdown_(){
   const el = document.getElementById('adminSessionMini');
   if(!el) return;
+  const renewBtn = '<button type="button" onclick="renewAdminSession_()" style="border:0;background:transparent;color:#b77e08;font:inherit;font-weight:850;text-decoration:underline;cursor:pointer;padding:0 0 0 5px;">Renovar</button>';
   if(!adminSessionExpiresAt){
-    el.textContent = hasValidAdminSession_() ? 'Sesión Admin activa' : 'Sesión Admin expirada';
+    el.innerHTML = hasValidAdminSession_() ? 'Sesión Admin activa' : `Sesión Admin expirada · ${renewBtn}`;
     return;
   }
   const remainingMs = adminSessionExpiresAt - Date.now();
   if(remainingMs <= 0){
-    el.textContent = 'Sesión Admin expirada';
+    clearAdminSession_();
+    el.innerHTML = `Sesión Admin expirada · ${renewBtn}`;
     return;
   }
   const mins = Math.ceil(remainingMs / 60000);
   if(mins <= 2){
-    el.textContent = `Sesión Admin · por expirar (${mins} min)`;
+    el.innerHTML = `Sesión Admin · por expirar (${mins} min) · ${renewBtn}`;
   } else {
     el.textContent = `Sesión Admin · aprox. ${mins} min restantes`;
   }
@@ -1674,15 +1699,25 @@ function apiGetSilent(action, params={}){
   return apiGet(action, params, 2, true, true);
 }
 
-async function apiPost(params, retriesLeft=2, silent=false){
-  params = withAdminSession_(params);
-  const action = String(params?.action || '');
+async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=false){
+  const originalParams = {...(params || {})};
+  const action = String(originalParams?.action || '');
+
+  // D4.3: si una acción Admin se intenta justo después de vencer la sesión,
+  // renovarla en el mismo panel en vez de mandar una petición sin token/PIN.
+  if(ADMIN_SESSION_ACTIONS_.has(action) && !hasValidAdminSession_() && !adminRenewAttempted){
+    const renewed = await renewAdminSession_();
+    if(!renewed) return {ok:false,error:'Sesión de administrador vencida.'};
+    adminRenewAttempted = true;
+  }
+
+  params = withAdminSession_(originalParams);
   const mutationActions = new Set([
     'savePrediction','savePredictionsBulk','setParticipantPaid','addParticipants','addMatch','editMatch',
     'submitResult','cancelAndReplaceMatch','addPolla','editPolla','deletePolla',
     'archivePolla','desarchivarPolla','closeSeason','clearSeasonData',
     'setSecurityAnswer','updateMyWhatsapp','resetPin','renameParticipant',
-    'splitParticipantIdentity','deleteParticipantFull'
+    'splitParticipantIdentity','deleteParticipantFull','setAppConfig'
   ]);
   const dedupeMutation = mutationActions.has(action);
   const mutationKey = dedupeMutation ? JSON.stringify(params || {}) : '';
@@ -1703,10 +1738,20 @@ async function apiPost(params, retriesLeft=2, silent=false){
         }
       );
       const result = await parseApiResponse_(res);
-      if(result && !result.ok && (result.error === 'ADMIN_SESSION_EXPIRED' || result.error === 'ADMIN_SESSION_INVALID')){
+      const technicalAdminError = String(result?.technicalError || result?.error || '');
+      if(
+        !result?.ok &&
+        ADMIN_SESSION_ACTIONS_.has(action) &&
+        !adminRenewAttempted &&
+        (technicalAdminError === 'ADMIN_SESSION_EXPIRED' || technicalAdminError === 'ADMIN_SESSION_INVALID')
+      ){
         clearAdminSession_();
         adminPin = null;
-        result.error = 'Sesión de administrador vencida. Vuelve a entrar a Admin.';
+        const renewed = await renewAdminSession_();
+        if(!renewed) return {ok:false,error:'Sesión de administrador vencida.'};
+        // liberar el dedupe de la petición vencida antes de repetirla con el token nuevo
+        if(dedupeMutation) inflightMutationKeys_.delete(mutationKey);
+        return apiPost(originalParams, retriesLeft, silent, true);
       }
 
       if(
@@ -1717,7 +1762,7 @@ async function apiPost(params, retriesLeft=2, silent=false){
         String(result.error).toLowerCase().includes('ocupado')
       ){
         await new Promise(r => setTimeout(r, 900 * (3 - retriesLeft)));
-        return apiPost(params, retriesLeft - 1, silent);
+        return apiPost(originalParams, retriesLeft - 1, silent, adminRenewAttempted);
       }
 
       return result;
@@ -2494,7 +2539,7 @@ function playerActionBlocked_(kind='prediction'){
 }
 
 async function saveAppConfig_(){
-  if(!hasValidAdminSession_()){ alert('Tu sesión Admin venció. Vuelve a entrar.'); return; }
+  if(!hasValidAdminSession_() && !(await renewAdminSession_())) return;
   const maintenance=!!document.getElementById('cfgMaintenance')?.checked;
   const predictions=!!document.getElementById('cfgPredictions')?.checked;
   const registrations=!!document.getElementById('cfgRegistrations')?.checked;
@@ -2508,6 +2553,7 @@ async function saveAppConfig_(){
 
 /* ============ LANDING ============ */
 async function initLanding(){
+  renderAppModeBanner_();
   void refreshAppConfig_(true);
   const container = document.getElementById('pollasContainer');
   container.innerHTML = '<div class="loading-msg">Cargando...</div>';
@@ -4254,6 +4300,74 @@ function adminAuthErrorMessage_(result){
   }
   return 'Clave incorrecta.';
 }
+let pendingAdminRenew_ = null;
+function toggleAdminRenewPinVisibility_(){
+  const input = document.getElementById('adminRenewPinInput');
+  const btn = document.getElementById('adminRenewPinToggle');
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  input.focus();
+}
+function cancelAdminRenew_(){
+  closeOverlay('adminRenewOverlay');
+  const pending = pendingAdminRenew_;
+  pendingAdminRenew_ = null;
+  if(pending) pending.resolve(false);
+}
+function renewAdminSession_(){
+  if(hasValidAdminSession_()){
+    updateAdminSessionCountdown_();
+    return Promise.resolve(true);
+  }
+  if(pendingAdminRenew_) return pendingAdminRenew_.promise;
+  let resolveFn;
+  const promise = new Promise(resolve=>{ resolveFn=resolve; });
+  pendingAdminRenew_ = {resolve:resolveFn, promise};
+  const input = document.getElementById('adminRenewPinInput');
+  input.value='';
+  input.dataset.ticoMasked='1';
+  input.type='text';
+  input.style.webkitTextSecurity='disc';
+  document.getElementById('adminRenewPinToggle').innerHTML = EYE_OPEN_SVG;
+  openOverlay('adminRenewOverlay');
+  setTimeout(()=>input.focus(), 50);
+  return promise;
+}
+async function submitAdminRenew_(){
+  if(!pendingAdminRenew_) return;
+  const pin = document.getElementById('adminRenewPinInput').value;
+  if(!pin){ alert('Escribe la clave de administrador.'); return; }
+  const btn = document.getElementById('adminRenewBtn');
+  btn.disabled=true; btn.textContent='Renovando...';
+  try{
+    const result = await apiPost({action:'authAdmin', pin}, 0, true, true);
+    if(!result?.ok){ alert(adminAuthErrorMessage_(result || {})); return; }
+    adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
+    const pending = pendingAdminRenew_;
+    pendingAdminRenew_ = null;
+    closeOverlay('adminRenewOverlay');
+    updateAdminSessionCountdown_();
+    showToast_('✓ Sesión Admin renovada por 30 min');
+    pending.resolve(true);
+  } finally {
+    btn.disabled=false; btn.textContent='Renovar 30 min';
+  }
+}
+
 let pendingAdminConfirm_ = null;
 function toggleAdminConfirmPinVisibility_(){
   const input = document.getElementById('adminConfirmPinInput');
@@ -4276,12 +4390,12 @@ function cancelAdminConfirmation_(){
   pendingAdminConfirm_ = null;
   if(pending) pending.resolve(null);
 }
-function requireAdminConfirmation_(purpose, message){
+async function requireAdminConfirmation_(purpose, message){
   if(!hasValidAdminSession_()){
-    alert('Tu sesión de administrador venció. Vuelve a entrar a Admin.');
-    return Promise.resolve(null);
+    const renewed = await renewAdminSession_();
+    if(!renewed) return null;
   }
-  if(pendingAdminConfirm_) return Promise.resolve(null);
+  if(pendingAdminConfirm_) return null;
   return new Promise(resolve=>{
     pendingAdminConfirm_ = {purpose, resolve};
     const input = document.getElementById('adminConfirmPinInput');
@@ -5590,7 +5704,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D4.2';
+const APP_VERSION = 'V25D4.3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
