@@ -136,9 +136,9 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .date-group-header{display:flex; align-items:center; gap:10px; padding:14px 4px 12px; border-bottom:1px solid var(--line); margin-bottom:16px; cursor:pointer; -webkit-tap-highlight-color:transparent;}
 .matches-view-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 18px;padding:4px;background:rgba(12,39,32,.07);border:1px solid rgba(12,39,32,.09);border-radius:14px;}
 .matches-view-tab{border:0;background:transparent;color:#6f766f;font:inherit;font-size:13px;font-weight:800;letter-spacing:.25px;padding:11px 10px;border-radius:10px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease;-webkit-tap-highlight-color:transparent;}
-.matches-view-tab.active{background:#fff;color:var(--pitch);box-shadow:0 2px 10px rgba(13,42,34,.10);}
+.matches-view-tab.active{background:linear-gradient(135deg,#f3c552,#e8ad2f);color:#18231e;box-shadow:0 2px 10px rgba(138,95,11,.18);}
 .matches-view-tab .tab-count{margin-left:5px;font-size:11px;opacity:.72;font-weight:800;}
-.matches-view-empty{margin:22px 0 8px;text-align:center;padding:26px 18px;border:1px dashed rgba(12,39,32,.16);border-radius:16px;color:#777e78;background:rgba(255,255,255,.5);font-size:13.5px;line-height:1.45;}
+.matches-view-empty{margin:22px 0 8px;text-align:center;padding:26px 18px;border:1px dashed rgba(12,39,32,.16);border-radius:16px;color:#18231e;background:rgba(255,255,255,.62);font-size:13.5px;line-height:1.45;}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;}}
 
 .date-group-label{font-family:'Anton', sans-serif; font-size:15px; letter-spacing:1px; color:rgba(246,243,234,0.55); text-transform:uppercase; flex-shrink:0; white-space:nowrap;}
@@ -2205,7 +2205,7 @@ function renderLanding(){
   if(actuales.length === 0 && proximas.length === 0) html = '<div class="no-pollas">Todavía no hay ninguna Polla activa.<br>Vuelve pronto.</div>';
   container.innerHTML = html;
 }
-function goToLanding(){
+function goToLanding(fromHistory_=false){
   if(!confirmDiscardUnsaved_()) return;
   dirtyPredictionIds_.clear();
   if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
@@ -2215,9 +2215,33 @@ function goToLanding(){
   selectedBulkMatches.clear();
   document.getElementById('streakBadge').classList.add('hidden');
   document.getElementById('miniLeaderboard').classList.add('hidden');
-  history.replaceState(null, '', location.pathname);
-  initLanding();
+  if(!fromHistory_) history.replaceState({view:'landing'}, '', location.pathname);
+  if(Array.isArray(allPollas) && allPollas.length){
+    renderLanding();
+    if(landingTimer) clearInterval(landingTimer);
+    landingTimer = setInterval(updateLandingCountdowns, 30000);
+  } else {
+    initLanding();
+  }
 }
+window.addEventListener('popstate', (event) => {
+  const params = new URLSearchParams(location.search);
+  const pollaId = params.get('polla');
+  if(currentPolla && !pollaId){
+    if(!confirmDiscardUnsaved_()){
+      const backUrl = new URL(location.href);
+      backUrl.searchParams.set('polla', currentPolla.id);
+      history.pushState({view:'polla', pollaId:currentPolla.id}, '', backUrl.pathname + '?' + backUrl.searchParams.toString());
+      return;
+    }
+    goToLanding(true);
+    return;
+  }
+  if(!currentPolla && pollaId){
+    enterPolla(pollaId, true).catch(()=>{});
+  }
+});
+
 async function enterPolla(pollaId, restoreFromUrl=false){
   if(landingTimer){ clearInterval(landingTimer); landingTimer = null; }
   currentPolla = allPollas.find(p => p.id === pollaId);
@@ -2234,12 +2258,23 @@ async function enterPolla(pollaId, restoreFromUrl=false){
     return;
   }
 
-  // Mantener la Polla actual en la URL. Así un refresh vuelve a esta misma Polla.
+  // Mantener la Polla actual en la URL y crear una entrada real de historial.
+  // Así el botón/gesto Atrás vuelve primero a Inicio en vez de sacar al usuario de la app.
   const url = new URL(location.href);
   url.searchParams.set('polla', currentPolla.id);
-  // El código de referido solo sirve para el ingreso inicial; no hace falta conservarlo.
   url.searchParams.delete('ref');
-  history.replaceState(null, '', url.pathname + '?' + url.searchParams.toString());
+  const pollaUrl_ = url.pathname + '?' + url.searchParams.toString();
+  if(restoreFromUrl){
+    if(history.state?.view === 'polla'){
+      history.replaceState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    } else {
+      history.replaceState({view:'landing'}, '', location.pathname);
+      history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    }
+  } else {
+    if(history.state?.view !== 'landing') history.replaceState({view:'landing'}, '', location.pathname);
+    history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+  }
 
   matchesView_ = currentPolla.status === 'finalizada' ? 'resolved' : 'upcoming';
   updateMatchesViewTabs_();
@@ -2263,6 +2298,9 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   document.getElementById('inviteRow').classList.add('hidden');
   resetAuthUI();
   await loadMatches();
+  const viewBeforeNatural_ = matchesView_;
+  chooseNaturalMatchesView_();
+  if(matchesView_ !== viewBeforeNatural_) await renderMatches();
   if(countdownTimer) clearInterval(countdownTimer);
   countdownTimer = setInterval(updateCountdowns, 30000);
 }
@@ -3085,13 +3123,41 @@ function computePointsBreakdown(predHome, predAway, actualHome, actualAway, isSt
   return {items, total};
 }
 
+function canceledMatchResolved_(match){
+  if(!match?.isCanceled) return false;
+  // Cancelar/Reemplazar conserva el mismo matchNumber. El cancelado pasa a
+  // “Resueltos” recién cuando algún reemplazo activo de ese número ya tiene
+  // resultado oficial cargado.
+  return matches.some(other =>
+    other.id !== match.id &&
+    !other.isCanceled &&
+    String(other.matchNumber) === String(match.matchNumber) &&
+    !!other.resultSubmitted
+  );
+}
+
+function isResolvedViewMatch_(match){
+  return !!match.resultSubmitted || canceledMatchResolved_(match);
+}
+
+function isUpcomingViewMatch_(match){
+  return !match.resultSubmitted && (!match.isCanceled || !canceledMatchResolved_(match));
+}
+
+function chooseNaturalMatchesView_(){
+  const upcomingN = matches.filter(isUpcomingViewMatch_).length;
+  const resolvedN = matches.filter(isResolvedViewMatch_).length;
+  if(upcomingN === 0 && resolvedN > 0) matchesView_ = 'resolved';
+  else if(matchesView_ !== 'resolved' || resolvedN === 0) matchesView_ = 'upcoming';
+}
+
 function updateMatchesViewTabs_(){
   const upBtn = document.getElementById('matchesTabUpcoming');
   const resBtn = document.getElementById('matchesTabResolved');
   const upCount = document.getElementById('matchesUpcomingCount');
   const resCount = document.getElementById('matchesResolvedCount');
-  const upcomingN = matches.filter(m => !m.resultSubmitted && !m.isCanceled).length;
-  const resolvedN = matches.filter(m => m.resultSubmitted || m.isCanceled).length;
+  const upcomingN = matches.filter(isUpcomingViewMatch_).length;
+  const resolvedN = matches.filter(isResolvedViewMatch_).length;
   if(upBtn){ upBtn.classList.toggle('active', matchesView_ === 'upcoming'); upBtn.setAttribute('aria-selected', matchesView_ === 'upcoming' ? 'true' : 'false'); }
   if(resBtn){ resBtn.classList.toggle('active', matchesView_ === 'resolved'); resBtn.setAttribute('aria-selected', matchesView_ === 'resolved' ? 'true' : 'false'); }
   if(upCount) upCount.textContent = upcomingN ? String(upcomingN) : '';
@@ -3127,8 +3193,8 @@ async function renderMatches(){
   updateMatchesViewTabs_();
   const allSorted = getSortedMatches();
   const sorted = allSorted.filter(m => matchesView_ === 'resolved'
-    ? (m.resultSubmitted || m.isCanceled)
-    : (!m.resultSubmitted && !m.isCanceled));
+    ? isResolvedViewMatch_(m)
+    : isUpcomingViewMatch_(m));
   if(sorted.length === 0){
     const msg = matchesView_ === 'resolved'
       ? 'Todavía no hay partidos resueltos'
@@ -4818,10 +4884,14 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25';
-let appUpdateWorker = null;
+const APP_VERSION = 'V25A1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
+let appUpdateReloaded_ = false;
+
+function removeAppUpdateNotice_(){
+  document.getElementById('appUpdateNotice')?.remove();
+}
 
 function showAppUpdateNotice(){
   if(document.getElementById('appUpdateNotice')) return;
@@ -4838,7 +4908,7 @@ function showAppUpdateNotice(){
   bar.innerHTML = `
     <div style="min-width:0;flex:1;line-height:1.25">
       <b style="display:block;color:#F2C14E;margin-bottom:3px">✨ Nueva actualización disponible</b>
-      <span style="font-size:13px;opacity:.88">Actualiza para cargar la versión más reciente de LaPollaTICO.</span>
+      <span style="font-size:13px;opacity:.88">Actualiza para cargar la versión más reciente de LaPollaTICO</span>
     </div>
     <button id="applyAppUpdateBtn" type="button" style="flex:0 0 auto;border:0;border-radius:10px;padding:9px 12px;background:#F2C14E;color:#07110F;font-weight:800;cursor:pointer">Actualizar</button>`;
   document.body.appendChild(bar);
@@ -4849,58 +4919,46 @@ function showAppUpdateNotice(){
       showToast_('📝 Guarda tus pronósticos pendientes antes de actualizar');
       return;
     }
+    const waiting = appUpdateRegistration?.waiting;
+    if(!waiting){
+      showToast_('La actualización todavía se está preparando');
+      appUpdateRegistration?.update().catch(()=>{});
+      return;
+    }
     appUpdateApplying = true;
     const btn = document.getElementById('applyAppUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
-
-    // V23: el SW nuevo permanece en waiting hasta que el usuario confirme.
-    // Al recibir SKIP_WAITING toma el control; controllerchange hace UN solo reload.
-    const waiting = appUpdateRegistration?.waiting || appUpdateWorker;
-    if(waiting && waiting.state === 'installed'){
-      waiting.postMessage({type:'SKIP_WAITING'});
-      // Protección: si por algún navegador controllerchange no llega, reintentamos
-      // una recarga limpia tras unos segundos; no se muestra un segundo aviso.
-      setTimeout(() => { if(appUpdateApplying) location.reload(); }, 5000);
-    } else {
-      appUpdateApplying = false;
-      if(btn){ btn.disabled = false; btn.textContent = 'Actualizar'; }
-      showToast_('La actualización todavía se está preparando. Intenta otra vez en unos segundos.');
-    }
+    waiting.postMessage({type:'SKIP_WAITING'});
   });
 }
 
 if('serviceWorker' in navigator){
   window.addEventListener('load', async () => {
     try{
-      const reg = await navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`);
+      // URL estable + updateViaCache:none: evita registros/versiones cruzadas por
+      // cambiar ?v= en cada release y obliga a comprobar sw.js contra la red.
+      const reg = await navigator.serviceWorker.register('sw.js', {updateViaCache:'none'});
       appUpdateRegistration = reg;
 
-      const offerUpdate = (worker) => {
-        if(!worker || !navigator.serviceWorker.controller) return;
-        appUpdateWorker = worker;
-        showAppUpdateNotice();
+      const offerWaiting_ = () => {
+        if(reg.waiting && navigator.serviceWorker.controller) showAppUpdateNotice();
       };
 
-      const watchInstallingWorker = (worker) => {
+      offerWaiting_();
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing;
         if(!worker) return;
         worker.addEventListener('statechange', () => {
-          if(worker.state === 'installed') offerUpdate(worker);
+          if(worker.state === 'installed') setTimeout(offerWaiting_, 0);
         });
-      };
+      });
 
-      // Puede existir una actualización que terminó de instalar mientras la app estaba cerrada.
-      if(reg.waiting) offerUpdate(reg.waiting);
-      if(reg.installing) watchInstallingWorker(reg.installing);
-      reg.addEventListener('updatefound', () => watchInstallingWorker(reg.installing));
-
-      // Comprobación fresca al abrir la app.
       reg.update().catch(()=>{});
 
-      // Solo recargamos cuando el usuario ya pulsó "Actualizar" y el nuevo SW
-      // realmente tomó control. Esto elimina el doble aviso / doble toque de V22.
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if(!appUpdateApplying) return;
-        appUpdateApplying = false;
+        if(!appUpdateApplying || appUpdateReloaded_) return;
+        appUpdateReloaded_ = true;
+        removeAppUpdateNotice_();
         location.reload();
       });
     }catch(err){
