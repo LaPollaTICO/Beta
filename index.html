@@ -362,6 +362,11 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .system-health-card.bad{border-color:rgba(198,77,55,.32);background:rgba(255,239,235,.68);}
 .system-health-actions{display:flex;justify-content:center;margin-top:8px;}
 .system-health-actions button{width:auto;min-width:150px;margin:0;}
+.system-health-recent{margin-top:12px;border:1px solid rgba(23,87,52,.10);background:rgba(255,255,255,.66);border-radius:12px;padding:11px;}
+.system-health-recent-title{font-size:11px;font-weight:900;color:#315047;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px;}
+.system-health-recent-item{font-size:11px;color:#56645e;padding:7px 0;border-top:1px solid rgba(23,87,52,.08);line-height:1.35;}
+.system-health-recent-item:first-of-type{border-top:0;padding-top:0;}
+.system-health-recent-empty{font-size:11px;color:#747d78;font-weight:650;}
 @media(max-width:520px){.system-health-grid{grid-template-columns:1fr 1fr;}}
 
 .admin-session-mini{text-align:center;font-size:11px;color:#68776f;margin:0 0 10px;}
@@ -907,6 +912,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       <div class="system-health-grid" id="systemHealthVersions"></div>
       <div class="system-health-grid" id="systemHealthLatency"></div>
       <div class="system-health-actions"><button class="btn-secondary" onclick="refreshSystemHealth_()">Revisar ahora</button></div>
+      <div class="system-health-recent" id="systemHealthRecent"></div>
       <p class="hint" style="margin-top:10px;">Esta revisión es solo para Admin. No modifica datos ni consume recursos de forma continua.</p>
     </div>
 
@@ -1624,6 +1630,8 @@ async function fetchWithTimeout_(url, options){
 }
 let lastApiRequestId_ = '';
 let lastTechnicalIssue_ = null;
+const recentTechnicalIssues_ = [];
+const healthLatencySamples_ = [];
 function newRequestId_(){
   try{
     const raw = crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase();
@@ -1638,6 +1646,8 @@ function rememberTechnicalIssue_(requestId, message){
     message: String(message || 'Error técnico'),
     at: Date.now()
   };
+  recentTechnicalIssues_.unshift({...lastTechnicalIssue_});
+  if(recentTechnicalIssues_.length > 5) recentTechnicalIssues_.length = 5;
 }
 function requestCodeText_(requestId){
   return requestId ? ` Código: ${requestId}.` : '';
@@ -4802,6 +4812,34 @@ let systemHealthBusy_ = false;
 function healthCard_(label, value, sub, good=true){
   return `<div class="system-health-card ${good?'good':'bad'}"><div class="k">${escapeHtml(label)}</div><div class="v">${escapeHtml(String(value ?? '—'))}</div><div class="s">${escapeHtml(sub || '')}</div></div>`;
 }
+
+function latencyLabel_(ms, kind='api'){
+  const n=Number(ms || 0);
+  const cuts = kind==='db' ? [250,800,1800] : [700,1500,3000];
+  if(n <= cuts[0]) return {text:'Excelente',good:true};
+  if(n <= cuts[1]) return {text:'Normal',good:true};
+  if(n <= cuts[2]) return {text:'Lenta',good:false};
+  return {text:'Muy lenta',good:false};
+}
+function median_(values){
+  const arr=values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
+  if(!arr.length) return 0;
+  const m=Math.floor(arr.length/2);
+  return arr.length%2 ? arr[m] : Math.round((arr[m-1]+arr[m])/2);
+}
+function renderRecentHealth_(){
+  const box=document.getElementById('systemHealthRecent');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const perf = samples.length ? `<div class="system-health-recent-item">Últimas ${samples.length} revisiones · mediana API <b>${apiMed} ms</b> · DB <b>${dbMed} ms</b></div>` : '';
+  const issues = recentTechnicalIssues_.length
+    ? recentTechnicalIssues_.slice(0,3).map(x=>`<div class="system-health-recent-item"><b>${escapeHtml(x.requestId || 'Sin código')}</b> · ${escapeHtml(new Date(x.at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}))}</div>`).join('')
+    : '<div class="system-health-recent-empty">Sin fallos técnicos recientes en esta sesión.</div>';
+  box.innerHTML=`<div class="system-health-recent-title">Historial reciente</div>${perf}${issues}`;
+}
+
 async function refreshSystemHealth_(){
   if(systemHealthBusy_) return;
   const state=document.getElementById('systemHealthState');
@@ -4809,6 +4847,7 @@ async function refreshSystemHealth_(){
   const versions=document.getElementById('systemHealthVersions');
   const latency=document.getElementById('systemHealthLatency');
   if(!state || !checked || !versions || !latency) return;
+  renderRecentHealth_();
   systemHealthBusy_=true;
   state.textContent='Revisando…';
   checked.textContent='Comprobando frontend, Service Worker, backend y base de datos.';
@@ -4845,18 +4884,25 @@ async function refreshSystemHealth_(){
       healthCard_('Service Worker',swVersion,swOk?'Coincide':'No coincide',swOk)+
       healthCard_('Backend',backendVersion,frontOk?'Coincide':'No coincide',frontOk)+
       healthCard_('Base de datos',dbVersion,dbOk?'Esquema correcto':'Revisar SQL',dbOk);
-    const edgeGood=edgeMs<1500;
     const dbMs=Number(result.dbLatencyMs ?? 0);
+    const serverMs=Number(result.serverProcessingMs ?? 0);
+    const apiClass=latencyLabel_(edgeMs,'api');
+    const dbClass=latencyLabel_(dbMs,'db');
+    healthLatencySamples_.push({apiMs:edgeMs,dbMs,at:Date.now()});
+    if(healthLatencySamples_.length>5) healthLatencySamples_.shift();
     latency.innerHTML=
-      healthCard_('Respuesta API',`${edgeMs} ms`,edgeGood?'Normal':'Más lenta de lo esperado',edgeGood)+
-      healthCard_('Consulta DB',`${dbMs} ms`,dbMs<800?'Normal':'Más lenta de lo esperado',dbMs<800)+
+      healthCard_('Respuesta API',`${edgeMs} ms`,apiClass.text,apiClass.good)+
+      healthCard_('Consulta DB',`${dbMs} ms`,dbClass.text,dbClass.good)+
+      healthCard_('Procesamiento servidor',`${serverMs} ms`,'Dentro de la Edge Function',serverMs<1200)+
       healthCard_('Base de datos',result.dbOk?'Conectada':'Error',result.dbOk?'Lectura correcta':'No respondió',!!result.dbOk)+
       healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime)+
       healthCard_('Última petición',lastApiRequestId_ || '—','Código de diagnóstico',true)+
       healthCard_('Último error',lastTechnicalIssue_?.requestId || 'Ninguno',lastTechnicalIssue_ ? 'Referencia para soporte' : 'Sin errores técnicos en esta sesión',!lastTechnicalIssue_);
+    renderRecentHealth_();
   }catch(err){
     state.textContent='⚠️ Sin respuesta';
     checked.textContent='No se pudo completar la revisión.';
+    renderRecentHealth_();
   }finally{
     systemHealthBusy_=false;
   }
@@ -5870,7 +5916,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25E2';
+const APP_VERSION = 'V25E3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
