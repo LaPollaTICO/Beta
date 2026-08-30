@@ -314,6 +314,17 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .admin-tabs button.active{background:var(--pitch); color:var(--chalk);}
 .admin-pane{display:none;}
 .admin-pane.active{display:block;}
+.admin-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0 14px;}
+.admin-overview-card{background:rgba(255,255,255,.72);border:1px solid rgba(23,87,52,.12);border-radius:12px;padding:12px;text-align:left;}
+.admin-overview-card .k{font-size:11px;font-weight:800;color:#607168;text-transform:uppercase;letter-spacing:.35px;}
+.admin-overview-card .v{font-size:22px;font-weight:900;color:var(--pitch);margin-top:2px;}
+.admin-overview-card .s{font-size:11px;color:#66756d;margin-top:2px;line-height:1.35;}
+.admin-health-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.admin-health-item{border-radius:10px;padding:9px 11px;font-size:12px;font-weight:750;line-height:1.4;background:rgba(255,255,255,.65);border:1px solid rgba(23,87,52,.10);color:#26362e;}
+.admin-health-item.ok{border-color:rgba(46,160,90,.28);}
+.admin-health-item.warn{border-color:rgba(210,153,22,.38);background:rgba(255,244,204,.58);}
+.admin-session-mini{text-align:center;font-size:11px;color:#68776f;margin:0 0 10px;}
+@media(max-width:420px){.admin-overview-grid{grid-template-columns:1fr 1fr;gap:8px}.admin-overview-card{padding:10px}.admin-overview-card .v{font-size:20px}}
 
 .list-item{border:1px solid #e0dccc; border-radius:12px; padding:12px 14px; margin-top:10px;}
 .list-item .top-row{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;}
@@ -782,13 +793,22 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <button class="btn-secondary" onclick="openCommunicationsCenter()">📣 Comunicados</button>
 
     <div class="admin-tabs">
-      <button class="active" data-tab="tabParticipantes" onclick="switchAdminTab('tabParticipantes')">Participantes</button>
+      <button class="active" data-tab="tabResumen" onclick="switchAdminTab('tabResumen')">Resumen</button>
+      <button data-tab="tabParticipantes" onclick="switchAdminTab('tabParticipantes')">Participantes</button>
       <button data-tab="tabPartidos" onclick="switchAdminTab('tabPartidos')">Partidos</button>
       <button data-tab="tabPremios" onclick="switchAdminTab('tabPremios')">Premios</button>
       <button data-tab="tabDatos" onclick="switchAdminTab('tabDatos')">Datos</button>
     </div>
 
-    <div class="admin-pane active" id="tabParticipantes">
+    <div class="admin-pane active" id="tabResumen">
+      <div class="admin-session-mini" id="adminSessionMini"></div>
+      <div class="admin-overview-grid" id="adminOverviewGrid"></div>
+      <h3 style="margin-top:8px;">Chequeo rápido</h3>
+      <div class="admin-health-list" id="adminHealthList"></div>
+      <p class="hint" style="margin-top:10px;">Este resumen es informativo y no bloquea ninguna acción.</p>
+    </div>
+
+    <div class="admin-pane" id="tabParticipantes">
       <div class="archived-lock">
         <label>Agregar participantes (uno por línea)</label>
         <textarea id="participantsInput" placeholder="Imanol&#10;Juan Pérez&#10;María López"></textarea>
@@ -4296,7 +4316,8 @@ async function openAdmin(){
   }
 
   if(!adminName) adminName = askAdminName_();
-  switchAdminTab('tabParticipantes');
+  switchAdminTab('tabResumen');
+  renderAdminOverview_();
   renderParticipantsList();
   // Mismo comportamiento que la vista del jugador: HOY abierto; cualquier otro día recogido.
   collapsedAdminGroups = computeDefaultCollapsedGroups();
@@ -4344,6 +4365,51 @@ function applyArchivedAdminLock_(){
 function switchAdminTab(tabId){
   document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
+  if(tabId === 'tabResumen') renderAdminOverview_();
+}
+
+function renderAdminOverview_(){
+  const grid = document.getElementById('adminOverviewGrid');
+  const health = document.getElementById('adminHealthList');
+  const session = document.getElementById('adminSessionMini');
+  if(!grid || !health || !currentPolla) return;
+
+  const parts = Array.isArray(participantsCache) ? participantsCache : [];
+  const participantTotal = parts.length || Number(currentPolla.participantCount || 0);
+  const paid = parts.length ? parts.filter(p=>!!p.paid).length : null;
+  const unpaid = paid === null ? null : Math.max(0, participantTotal-paid);
+
+  const validMatches = Array.isArray(matches) ? matches.filter(m=>!m.isCanceled) : [];
+  const totalMatches = validMatches.length;
+  const resolved = validMatches.filter(m=>!!m.resultSubmitted).length;
+  const open = validMatches.filter(m=>!m.resultSubmitted && !isClosed(m.closeAt)).length;
+  const awaiting = validMatches.filter(m=>!m.resultSubmitted && isClosed(m.closeAt)).length;
+  const canceled = Array.isArray(matches) ? matches.filter(m=>!!m.isCanceled).length : 0;
+  const target = Number(currentPolla.totalMatches || 0);
+
+  const paySub = paid === null ? 'Carga participantes para ver pagos' : `${paid} pagaron · ${unpaid} pendientes`;
+  grid.innerHTML = `
+    <div class="admin-overview-card"><div class="k">Participantes</div><div class="v">${participantTotal}</div><div class="s">${paySub}</div></div>
+    <div class="admin-overview-card"><div class="k">Partidos</div><div class="v">${totalMatches}${target ? ' / '+target : ''}</div><div class="s">${open} abiertos · ${resolved} resueltos</div></div>
+    <div class="admin-overview-card"><div class="k">Por resolver</div><div class="v">${awaiting}</div><div class="s">Cerrados esperando resultado</div></div>
+    <div class="admin-overview-card"><div class="k">Estado</div><div class="v" style="font-size:16px;margin-top:6px;">${currentPolla.isArchived?'Archivada':(currentPolla.status==='finalizada'?'Finalizada':(currentPolla.status==='actual'?'Activa':'Próxima'))}</div><div class="s">${canceled ? canceled+' cancelado(s)' : 'Sin incidencias registradas'}</div></div>`;
+
+  const checks = [];
+  if(totalMatches === 0) checks.push(['warn','⚠️ Todavía no hay partidos cargados en esta Polla.']);
+  else checks.push(['ok',`✅ ${totalMatches} partido(s) cargado(s).`]);
+  if(target && totalMatches < target) checks.push(['warn',`⏳ Faltan ${target-totalMatches} partido(s) para llegar a la meta de ${target}.`]);
+  if(awaiting > 0) checks.push(['warn',`⚽ Hay ${awaiting} partido(s) cerrados esperando resultado.`]);
+  else if(resolved > 0) checks.push(['ok','✅ No hay resultados cerrados pendientes de subir.']);
+  if(unpaid !== null && unpaid > 0) checks.push(['warn',`💳 ${unpaid} participante(s) siguen pendientes de pago.`]);
+  else if(unpaid === 0 && participantTotal > 0) checks.push(['ok','✅ Todos los participantes figuran como pagados.']);
+  if(currentPolla.status === 'actual' && open === 0 && awaiting === 0 && resolved > 0) checks.push(['warn','🏁 No quedan partidos abiertos. Revisa si ya corresponde finalizar la Polla.']);
+  if(currentPolla.isArchived) checks.push(['ok','🗄️ Polla archivada y protegida contra cambios deportivos.']);
+  health.innerHTML = checks.map(([kind,text])=>`<div class="admin-health-item ${kind}">${text}</div>`).join('');
+
+  if(session){
+    const mins = adminSessionExpiresAt ? Math.max(0, Math.ceil((adminSessionExpiresAt-Date.now())/60000)) : 0;
+    session.textContent = mins > 0 ? `Sesión Admin · aprox. ${mins} min restantes` : 'Sesión Admin activa';
+  }
 }
 
 // 🏆 Guarda el toggle de "Ganadores en vivo" apenas se marca/desmarca, sin
@@ -4526,6 +4592,7 @@ async function renderParticipantsList(){
   participantsCachePollaId = currentPolla.id;
   participantsCacheAt = Date.now();
   renderPozo();
+  renderAdminOverview_();
   if(participantsCache.length===0){list.innerHTML='<p class="hint">Sin participantes todavía.</p>';return;}
   list.innerHTML=participantsCache.map(p=>`
     <div class="list-item">
@@ -5353,7 +5420,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D2.2';
+const APP_VERSION = 'V25D3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
