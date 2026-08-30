@@ -1,4 +1,4 @@
-// Service Worker de La Polla TICO — V25F6.
+// Service Worker de La Polla TICO — V25G1.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
@@ -33,7 +33,7 @@ self.addEventListener('install', (event) => {
   // V25B1.1: NO skipWaiting automático. Esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25F6';
+const SW_VERSION = 'V25G1';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){

@@ -728,6 +728,29 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
   </div>
 </div>
 
+<!-- ======= G1: GESTIÓN HISTÓRICA DE JUGADORES ======= -->
+<div class="overlay" id="historicalPlayersOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="closeOverlay('historicalPlayersOverlay')">✕</button>
+    <div class="modal-icon">🗂️</div><h2>Jugadores históricos</h2>
+    <p class="hint">Busca una identidad global. Antes de borrar se muestra exactamente qué historial tiene.</p>
+    <input id="historicalPlayerSearch" type="text" placeholder="Buscar jugador..." oninput="renderHistoricalPlayers_()">
+    <div id="historicalPlayersList" style="margin-top:10px;"></div>
+  </div>
+</div>
+
+<div class="overlay" id="historicalPlayerDetailOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="closeOverlay('historicalPlayerDetailOverlay')">✕</button>
+    <div class="modal-icon">🧾</div><h2 id="historicalPlayerDetailTitle">Jugador</h2>
+    <div id="historicalPlayerDetailBody" class="pozo-box"></div>
+    <button id="historicalAnonBtn" class="btn-secondary" style="border-color:rgba(255,255,255,.75);" onclick="deleteHistoricalPlayer_('anonymize')">👤 Eliminar cuenta y anonimizar</button>
+    <p class="hint">Borra acceso, PIN y recuperación. Conserva puntos/títulos, pero el nombre deja de mostrarse.</p>
+    <button id="historicalEraseBtn" class="btn-secondary" style="border-color:rgba(255,255,255,.75);" onclick="deleteHistoricalPlayer_('erase_visible')">🧹 Eliminar también méritos globales</button>
+    <p class="hint">Además quita Tabla del año y Ganadores. Los registros deportivos sellados quedan como “Jugador eliminado” para no promover automáticamente a otro campeón.</p>
+  </div>
+</div>
+
 <!-- ======= CÓDIGOS DE ACTIVACIÓN ADMIN ======= -->
 <div class="overlay" id="activationCodesOverlay">
   <div class="modal">
@@ -951,6 +974,11 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       </div>
       <h3>Participantes activos</h3>
       <div id="participantsList"></div>
+      <div class="pozo-box" style="margin-top:14px;">
+        <b>🗂️ Gestión histórica de jugadores</b>
+        <p class="hint" style="margin:7px 0 10px;">Administra una identidad global aunque ya no participe en esta Polla. Las eliminaciones históricas no recalculan campeones.</p>
+        <button class="btn-secondary" style="border-color:rgba(255,255,255,.75);" onclick="openHistoricalPlayersManager_()">Abrir gestión histórica</button>
+      </div>
     </div>
 
     <div class="admin-pane" id="tabPartidos">
@@ -1416,7 +1444,7 @@ function hasValidAdminSession_(){
 }
 const ADMIN_SESSION_ACTIONS_ = new Set([
   'addPolla','editPolla','deletePolla','addMatch','editMatch','deleteMatch','cancelAndReplaceMatch',
-  'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion',
+  'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion','getHistoricalPlayersAdmin','previewHistoricalPlayerDeletion','deleteHistoricalPlayer',
   'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
   'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
   'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
@@ -1869,7 +1897,7 @@ async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=
     'submitResult','cancelAndReplaceMatch','addPolla','editPolla','deletePolla',
     'archivePolla','desarchivarPolla','closeSeason','clearSeasonData',
     'setSecurityAnswer','updateMyWhatsapp','resetPin','renameParticipant',
-    'splitParticipantIdentity','deleteParticipantFull','setAppConfig'
+    'splitParticipantIdentity','deleteParticipantFull','deleteHistoricalPlayer','setAppConfig'
   ]);
   const dedupeMutation = mutationActions.has(action);
   const mutationKey = dedupeMutation ? JSON.stringify(params || {}) : '';
@@ -5320,6 +5348,53 @@ async function regenerateActivation(name){
   const result=await apiPost({action:'regenerateActivationCode',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName});
   if(!result.ok){alert(result.error||'No se pudo regenerar.');return;} showActivationCodes([{name,code:result.activationCode}]);
 }
+let historicalPlayersCache_=[];
+let historicalPlayerSelected_=null;
+async function openHistoricalPlayersManager_(){
+  openOverlay('historicalPlayersOverlay');
+  const list=document.getElementById('historicalPlayersList');
+  list.innerHTML='<p class="hint">Cargando...</p>';
+  const r=await apiPost({action:'getHistoricalPlayersAdmin',pin:adminPin,adminName:adminName});
+  if(!r?.ok){list.innerHTML='<p class="hint">No se pudo cargar la lista.</p>';return;}
+  historicalPlayersCache_=Array.isArray(r.players)?r.players:[];
+  document.getElementById('historicalPlayerSearch').value='';
+  renderHistoricalPlayers_();
+}
+function renderHistoricalPlayers_(){
+  const box=document.getElementById('historicalPlayersList'); if(!box)return;
+  const q=normalizeName(document.getElementById('historicalPlayerSearch')?.value||'');
+  const rows=historicalPlayersCache_.filter(p=>!q||normalizeName(p.name).includes(q)).slice(0,100);
+  box.innerHTML=rows.length?rows.map(p=>`<div class="list-item"><div><b>${escapeHtml(p.name)}</b><small style="display:block;">Identidad global</small></div><button class="icon-btn" title="Revisar historial" onclick="openHistoricalPlayerDetail_('${jsAttr(p.id)}')">›</button></div>`).join(''):'<p class="hint">No hay coincidencias.</p>';
+}
+async function openHistoricalPlayerDetail_(playerId){
+  const body=document.getElementById('historicalPlayerDetailBody');
+  body.innerHTML='<p class="hint">Revisando historial...</p>'; openOverlay('historicalPlayerDetailOverlay');
+  const r=await apiPost({action:'previewHistoricalPlayerDeletion',playerId,pin:adminPin,adminName:adminName});
+  if(!r?.ok){body.innerHTML=`<p class="hint">${escapeHtml(r?.error||'No se pudo revisar.')}</p>`;return;}
+  historicalPlayerSelected_=r;
+  document.getElementById('historicalPlayerDetailTitle').textContent=r.player?.name||'Jugador';
+  const t=r.totals||{}; const active=Array.isArray(r.activePollas)?r.activePollas:[];
+  body.innerHTML=`<b>Resumen antes de borrar</b><br><span class="hint">${Number(t.participations||0)} participaciones · ${Number(t.predictions||0)} pronósticos<br>${Number(t.points||0)} pts acumulados · ${Number(t.matches||0)} PJ · ${Number(t.exacts||0)} exactos · ${Number(t.mvps||0)} MVP<br>${Number(t.titles||0)} título(s) · ${Number(t.compactedPollas||0)} Polla(s) compactada(s) · ${Number(t.seasons||0)} temporada(s)</span>${active.length?`<p style="margin:10px 0 0;"><b>⚠️ Bloqueado:</b> todavía participa en ${active.map(p=>'Polla #'+escapeHtml(p.number)).join(', ')}. Retíralo primero de esas Pollas.</p>`:'<p style="margin:10px 0 0;">Puede gestionarse históricamente.</p>'}<p class="hint" style="margin-top:8px;">Los ZIP sellados previos no se modifican; siguen siendo la copia de auditoría original.</p>`;
+  document.getElementById('historicalAnonBtn').disabled=!r.canDelete;
+  document.getElementById('historicalEraseBtn').disabled=!r.canDelete;
+}
+async function deleteHistoricalPlayer_(mode){
+  const r=historicalPlayerSelected_; if(!r?.player?.id||!r.canDelete)return;
+  const name=r.player.name;
+  const total=mode==='erase_visible';
+  const msg=total
+    ? `⚠️ ELIMINACIÓN HISTÓRICA\n\nSe eliminará la identidad de ${name}, su acceso, PIN y recuperación. También dejará de aparecer en Tabla del año y Ganadores.\n\nSus registros deportivos históricos quedarán anonimizados para NO recalcular campeones.\n\n¿Continuar?`
+    : `¿Eliminar la cuenta de ${name} y anonimizar su historial?\n\nSus puntos y títulos se conservan, pero aparecerán como “Jugador eliminado”.`;
+  if(!confirm(msg))return;
+  const result=await withSensitiveAdminConfirmation_('deleteHistoricalPlayer',`Confirma tu clave para eliminar históricamente a ${name}.`,()=>apiPost({action:'deleteHistoricalPlayer',playerId:r.player.id,mode,pin:adminPin,adminName:adminName}));
+  if(!result)return;
+  if(!result.ok){alert(result.error||'No se pudo completar la eliminación histórica.');return;}
+  invalidateStandingsCaches_(); invalidateParticipantsCache_();
+  historicalPlayersCache_=historicalPlayersCache_.filter(p=>p.id!==r.player.id); historicalPlayerSelected_=null;
+  closeOverlay('historicalPlayerDetailOverlay'); renderHistoricalPlayers_();
+  alert(total?'✅ Identidad eliminada. También se retiraron sus méritos globales; los resultados históricos quedaron anonimizados sin recalcular campeones.':'✅ Cuenta eliminada e historial anonimizado.');
+}
+
 async function addParticipants(){
   const raw=document.getElementById('participantsInput').value;
   const names=raw.split('\n').map(n=>n.trim()).filter(Boolean);
@@ -6446,7 +6521,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F6';
+const APP_VERSION = 'V25G1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
