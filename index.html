@@ -134,6 +134,13 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 
 .date-group{margin-bottom:8px;}
 .date-group-header{display:flex; align-items:center; gap:10px; padding:14px 4px 12px; border-bottom:1px solid var(--line); margin-bottom:16px; cursor:pointer; -webkit-tap-highlight-color:transparent;}
+.matches-view-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 18px;padding:4px;background:rgba(12,39,32,.07);border:1px solid rgba(12,39,32,.09);border-radius:14px;}
+.matches-view-tab{border:0;background:transparent;color:#6f766f;font:inherit;font-size:13px;font-weight:800;letter-spacing:.25px;padding:11px 10px;border-radius:10px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease;-webkit-tap-highlight-color:transparent;}
+.matches-view-tab.active{background:#fff;color:var(--pitch);box-shadow:0 2px 10px rgba(13,42,34,.10);}
+.matches-view-tab .tab-count{margin-left:5px;font-size:11px;opacity:.72;font-weight:800;}
+.matches-view-empty{margin:22px 0 8px;text-align:center;padding:26px 18px;border:1px dashed rgba(12,39,32,.16);border-radius:16px;color:#777e78;background:rgba(255,255,255,.5);font-size:13.5px;line-height:1.45;}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;}}
+
 .date-group-label{font-family:'Anton', sans-serif; font-size:15px; letter-spacing:1px; color:rgba(246,243,234,0.55); text-transform:uppercase; flex-shrink:0; white-space:nowrap;}
 .date-group-pill{margin-left:auto; background:rgba(242,193,78,0.14); color:var(--floodlight); font-size:11px; font-weight:800; letter-spacing:0.5px; padding:5px 12px; border-radius:20px; text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px;}
 .date-group-chevron{color:rgba(246,243,234,0.45); font-size:16px; transition:transform 0.2s ease; transform:rotate(-90deg); flex-shrink:0;}
@@ -500,6 +507,10 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     </label>
   </div>
 
+  <div class="matches-view-tabs" id="matchesViewTabs" role="tablist" aria-label="Partidos de la Polla">
+    <button class="matches-view-tab active" id="matchesTabUpcoming" type="button" role="tab" aria-selected="true" onclick="setMatchesView_('upcoming')">Por jugar <span class="tab-count" id="matchesUpcomingCount"></span></button>
+    <button class="matches-view-tab" id="matchesTabResolved" type="button" role="tab" aria-selected="false" onclick="setMatchesView_('resolved')">Resueltos <span class="tab-count" id="matchesResolvedCount"></span></button>
+  </div>
   <div id="matchesContainer"></div>
   <div class="mini-leaderboard hidden" id="miniLeaderboard"></div>
 
@@ -1102,6 +1113,7 @@ let currentPolla = null;
 let matches = [];
 let bulkMode = false;
 let selectedBulkMatches = new Set();
+let matchesView_ = 'upcoming'; // 'upcoming' = pendientes/futuros; 'resolved' = resultados/cancelados
 let collapsedDateGroups = new Set(); // fechas (YYYY-MM-DD) recogidas; se recalcula en cada loadMatches()
 let predictionsCache = {};
 let adminPredictionsCache = {}; // datos completos visibles solo para Admin autenticado
@@ -2229,6 +2241,9 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   url.searchParams.delete('ref');
   history.replaceState(null, '', url.pathname + '?' + url.searchParams.toString());
 
+  matchesView_ = currentPolla.status === 'finalizada' ? 'resolved' : 'upcoming';
+  updateMatchesViewTabs_();
+
   predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:currentPolla?.id||null,data:null,at:0}; selectedBulkMatches.clear();
   document.getElementById('landingScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
@@ -2493,6 +2508,14 @@ async function checkName(){
   }finally{ busyFlags.checkName=false; btn.disabled=false; btn.textContent='✓'; }
 }
 
+async function finishPlayerAccessWithoutJump_(runner){
+  // Al confirmar identidad no forzamos al usuario hacia ningún partido.
+  // Conservamos su posición visual aunque renderMatches reconstruya el contenido.
+  const y = window.scrollY;
+  await runner();
+  requestAnimationFrame(() => window.scrollTo({top:y, left:0, behavior:'auto'}));
+}
+
 async function submitExistingLogin(){
   const pin=document.getElementById('accessPinInput').value.trim();
   if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
@@ -2505,7 +2528,7 @@ async function submitExistingLogin(){
     accessError(result.error||'No se pudo ingresar.'); return;
   }
   closeOverlay('playerAccessOverlay');
-  await onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),result.registered,false,result.newInThisPolla,result.needsSecurityAnswer,result.referralCode);
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),result.registered,false,result.newInThisPolla,result.needsSecurityAnswer,result.referralCode));
 }
 
 async function submitActivation(){
@@ -2516,7 +2539,7 @@ async function submitActivation(){
   const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin});
   if(!result.ok){accessError(result.error==='CODIGO_ACTIVACION_INVALIDO'?'El código de activación no es correcto.':result.error);return;}
   closeOverlay('playerAccessOverlay');
-  await onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,false,false,result.needsSecurityAnswer,result.referralCode);
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,false,false,result.needsSecurityAnswer,result.referralCode));
 }
 
 async function submitNewRegistration(){
@@ -2531,7 +2554,7 @@ async function submitNewRegistration(){
     accessError(msgs[result.error]||result.error||'No se pudo completar el registro.'); return;
   }
   incomingRefCode=''; closeOverlay('playerAccessOverlay');
-  await onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,true,false,result.needsSecurityAnswer,result.referralCode);
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,true,false,result.needsSecurityAnswer,result.referralCode));
 }
 
 function openRecoveryMode(){
@@ -3062,13 +3085,57 @@ function computePointsBreakdown(predHome, predAway, actualHome, actualAway, isSt
   return {items, total};
 }
 
+function updateMatchesViewTabs_(){
+  const upBtn = document.getElementById('matchesTabUpcoming');
+  const resBtn = document.getElementById('matchesTabResolved');
+  const upCount = document.getElementById('matchesUpcomingCount');
+  const resCount = document.getElementById('matchesResolvedCount');
+  const upcomingN = matches.filter(m => !m.resultSubmitted && !m.isCanceled).length;
+  const resolvedN = matches.filter(m => m.resultSubmitted || m.isCanceled).length;
+  if(upBtn){ upBtn.classList.toggle('active', matchesView_ === 'upcoming'); upBtn.setAttribute('aria-selected', matchesView_ === 'upcoming' ? 'true' : 'false'); }
+  if(resBtn){ resBtn.classList.toggle('active', matchesView_ === 'resolved'); resBtn.setAttribute('aria-selected', matchesView_ === 'resolved' ? 'true' : 'false'); }
+  if(upCount) upCount.textContent = upcomingN ? String(upcomingN) : '';
+  if(resCount) resCount.textContent = resolvedN ? String(resolvedN) : '';
+}
+
+function setMatchesView_(view){
+  if(view !== 'upcoming' && view !== 'resolved') return;
+  if(matchesView_ === view) return;
+  matchesView_ = view;
+  // El envío masivo solo pertenece a “Por jugar”. Evitamos controles de edición
+  // dentro del histórico resuelto para mantener la pantalla limpia y sin ambigüedad.
+  const bulkRow = document.getElementById('bulkToggleRow');
+  const bulkBar = document.getElementById('bulkBar');
+  if(view === 'resolved'){
+    bulkMode = false;
+    selectedBulkMatches.clear();
+    const cb = document.getElementById('bulkModeCheckbox');
+    if(cb) cb.checked = false;
+    bulkRow?.classList.add('hidden');
+    bulkBar?.classList.add('hidden');
+  } else if(authedName){
+    bulkRow?.classList.remove('hidden');
+  }
+  updateMatchesViewTabs_();
+  renderMatches();
+}
+
 async function renderMatches(){
   const container = document.getElementById('matchesContainer');
   container.innerHTML = '';
 
-  const sorted = getSortedMatches();
+  updateMatchesViewTabs_();
+  const allSorted = getSortedMatches();
+  const sorted = allSorted.filter(m => matchesView_ === 'resolved'
+    ? (m.resultSubmitted || m.isCanceled)
+    : (!m.resultSubmitted && !m.isCanceled));
   if(sorted.length === 0){
-    container.innerHTML = `<div class="empty"><div class="ball">⚽</div>Aún no hay partidos abiertos.</div>`;
+    const msg = matchesView_ === 'resolved'
+      ? 'Todavía no hay partidos resueltos'
+      : 'No hay partidos por jugar en este momento';
+    container.innerHTML = `<div class="matches-view-empty"><div style="font-size:24px;margin-bottom:6px">⚽</div>${msg}</div>`;
+    updateBulkBar();
+    updateMiniLeaderboard();
     return;
   }
 
@@ -4751,8 +4818,9 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V23';
+const APP_VERSION = 'V25';
 let appUpdateWorker = null;
+let appUpdateRegistration = null;
 let appUpdateApplying = false;
 
 function showAppUpdateNotice(){
@@ -4777,16 +4845,26 @@ function showAppUpdateNotice(){
 
   document.getElementById('applyAppUpdateBtn')?.addEventListener('click', () => {
     if(appUpdateApplying) return;
+    if(hasUnsavedPredictions_()){
+      showToast_('📝 Guarda tus pronósticos pendientes antes de actualizar');
+      return;
+    }
     appUpdateApplying = true;
     const btn = document.getElementById('applyAppUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
 
     // V23: el SW nuevo permanece en waiting hasta que el usuario confirme.
     // Al recibir SKIP_WAITING toma el control; controllerchange hace UN solo reload.
-    if(appUpdateWorker && appUpdateWorker.state === 'installed'){
-      appUpdateWorker.postMessage({type:'SKIP_WAITING'});
+    const waiting = appUpdateRegistration?.waiting || appUpdateWorker;
+    if(waiting && waiting.state === 'installed'){
+      waiting.postMessage({type:'SKIP_WAITING'});
+      // Protección: si por algún navegador controllerchange no llega, reintentamos
+      // una recarga limpia tras unos segundos; no se muestra un segundo aviso.
+      setTimeout(() => { if(appUpdateApplying) location.reload(); }, 5000);
     } else {
-      location.reload();
+      appUpdateApplying = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Actualizar'; }
+      showToast_('La actualización todavía se está preparando. Intenta otra vez en unos segundos.');
     }
   });
 }
@@ -4795,6 +4873,7 @@ if('serviceWorker' in navigator){
   window.addEventListener('load', async () => {
     try{
       const reg = await navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`);
+      appUpdateRegistration = reg;
 
       const offerUpdate = (worker) => {
         if(!worker || !navigator.serviceWorker.controller) return;
@@ -4820,7 +4899,9 @@ if('serviceWorker' in navigator){
       // Solo recargamos cuando el usuario ya pulsó "Actualizar" y el nuevo SW
       // realmente tomó control. Esto elimina el doble aviso / doble toque de V22.
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if(appUpdateApplying) location.reload();
+        if(!appUpdateApplying) return;
+        appUpdateApplying = false;
+        location.reload();
       });
     }catch(err){
       console.warn('No se pudo registrar el service worker:', err);

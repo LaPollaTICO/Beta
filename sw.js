@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V23.
+// Service Worker de La Polla TICO — V25.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v23';
-const RUNTIME_CACHE = 'polla-tico-runtime-v23';
+const SHELL_CACHE = 'polla-tico-shell-v25';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25';
 
 const SHELL_FILES = [
   './',
@@ -23,12 +23,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async()=>{
     const cache = await caches.open(SHELL_CACHE);
 
-    // Fuerza una copia fresca del shell para no reutilizar HTML viejo
-    // que pudiera quedar en el caché HTTP del navegador.
+    // Fuerza una copia fresca del shell para no reutilizar HTML viejo del HTTP cache.
     await Promise.all(SHELL_FILES.map(async (path) => {
       try{
         const response = await fetch(
-          new Request(path, { cache: 'reload' })
+          new Request(path, {cache:'reload'})
         );
 
         if(response && response.ok){
@@ -40,15 +39,10 @@ self.addEventListener('install', (event) => {
     }));
   })());
 
-  // V23:
-  // NO usamos skipWaiting() automáticamente.
-  // Esperamos a que el usuario pulse "Actualizar".
+  // V25: NO skipWaiting automático.
+  // Esperamos la confirmación del usuario.
 });
 
-
-// ============================================================
-// ACTUALIZACIÓN MANUAL
-// ============================================================
 
 self.addEventListener('message', (event) => {
   if(
@@ -60,14 +54,9 @@ self.addEventListener('message', (event) => {
 });
 
 
-// ============================================================
-// ACTIVACIÓN
-// ============================================================
-
 self.addEventListener('activate', (event) => {
   event.waitUntil((async()=>{
 
-    // Elimina cachés de versiones anteriores.
     const names = await caches.keys();
 
     await Promise.all(
@@ -80,23 +69,17 @@ self.addEventListener('activate', (event) => {
         .map(n => caches.delete(n))
     );
 
-    // Navigation Preload si el navegador lo soporta.
     if(self.registration.navigationPreload){
       try{
         await self.registration.navigationPreload.enable();
       }catch(_){}
     }
 
-    // El nuevo Service Worker toma control de las pestañas.
     await self.clients.claim();
 
   })());
 });
 
-
-// ============================================================
-// FETCH
-// ============================================================
 
 self.addEventListener('fetch', (event) => {
 
@@ -106,7 +89,6 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Solo manejamos archivos del mismo dominio.
   if(url.origin !== self.location.origin){
     return;
   }
@@ -114,13 +96,6 @@ self.addEventListener('fetch', (event) => {
 
   // ==========================================================
   // NAVEGACIÓN / INDEX.HTML
-  // ==========================================================
-  //
-  // Entrega inmediatamente el HTML guardado.
-  // Después actualiza una copia fresca en segundo plano.
-  //
-  // Esto hace que abrir/refrescar la app sea rápido,
-  // incluso con conexión lenta.
   // ==========================================================
 
   if(
@@ -150,9 +125,8 @@ self.addEventListener('fetch', (event) => {
             preload ||
             await fetch(
               event.request,
-              { cache: 'no-cache' }
+              {cache:'no-cache'}
             );
-
 
           if(resp && resp.ok){
 
@@ -174,26 +148,24 @@ self.addEventListener('fetch', (event) => {
       })();
 
 
-      // Dejamos que la actualización termine en background.
       event.waitUntil(
         refresh.then(()=>{})
       );
 
 
-      // Si ya existe copia local, mostrarla inmediatamente.
       if(cached){
         return cached;
       }
 
 
-      // Primera visita: esperar la descarga.
       const fresh = await refresh;
+
 
       return fresh || new Response(
         'Sin conexión',
         {
-          status: 503,
-          headers: {
+          status:503,
+          headers:{
             'Content-Type':
               'text/plain; charset=utf-8'
           }
@@ -208,10 +180,6 @@ self.addEventListener('fetch', (event) => {
 
   // ==========================================================
   // COMUNICADOS
-  // ==========================================================
-  //
-  // Cache-first después del primer uso.
-  // Actualización silenciosa en segundo plano.
   // ==========================================================
 
   if(url.pathname.includes('/comunicados/')){
@@ -257,9 +225,6 @@ self.addEventListener('fetch', (event) => {
 
   // ==========================================================
   // ASSETS LOCALES
-  // ==========================================================
-  //
-  // Imágenes, manifest, íconos, etc.
   // ==========================================================
 
   event.respondWith(
