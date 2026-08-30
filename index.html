@@ -2968,19 +2968,38 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   document.getElementById('bulkToggleRow').classList.toggle('hidden', matchesView_ === 'resolved');
   statusEl.textContent = registered ? '✓ ¡Bienvenido! PIN creado correctamente.' : `✓ Bienvenido de nuevo, ${authedName}`;
   statusEl.className = 'name-status ok';
-  await refreshMyPredictions();
+
+  // La racha es secundaria: empieza en paralelo y nunca retrasa la aparición
+  // de los pronósticos ni del panel principal.
+  void updateStreakBadge();
+
+  // C5: una llamada privada trae pronósticos + estado de inscripción. Si por
+  // algún motivo el backend todavía no tiene C5, conservamos fallback compatible.
+  const bootstrap = await getPlayerBootstrap_();
+  let myStatus = null;
+  if(bootstrap?.ok){
+    mergeMyPredictions_(bootstrap.predictions || {});
+    myStatus = bootstrap;
+  } else {
+    await refreshMyPredictions();
+    myStatus = await getMyParticipantStatus_(true);
+  }
+
   const recoveredDrafts = restorePredictionDrafts_();
   await renderMatches();
   if(recoveredDrafts > 0) showToast_(`📝 Recuperamos ${recoveredDrafts === 1 ? 'un pronóstico sin enviar' : recoveredDrafts + ' pronósticos sin enviar'}`);
-  updateStreakBadge();
 
-  // 🔖 Antes solo se sabía el código de invitación en el momento de invitar
-  // (inviteFriends lo pedía recién ahí). Ahora se guarda apenas la persona
-  // confirma su identidad y se muestra siempre junto al botón de invitar,
-  // así puede verlo (y copiarlo/compartirlo por su cuenta) sin tener que
-  // usar el flujo de "Invitar amigos" para enterarse cuál es.
-  myReferralCode = referralCode || myReferralCode;
+  myReferralCode = referralCode || myStatus?.referralCode || myReferralCode;
+  myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
   renderMyReferralCode_();
+
+  // Reutilizamos el mismo estado para el aviso de pago. Antes se volvía a
+  // consultar getMyParticipantStatus inmediatamente, generando otra llamada.
+  const payBanner = document.getElementById('payPendingBanner');
+  if(payBanner){
+    if(!currentPolla || currentPolla.isFreePolla || !myStatus?.ok || myStatus.paid) payBanner.classList.add('hidden');
+    else payBanner.classList.remove('hidden');
+  }
 
   let stillNeedsSecurityAnswer = needsSecurityAnswer;
   if(isNewRegistration){
@@ -2990,17 +3009,11 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
       if(saved) stillNeedsSecurityAnswer = false;
     }
   } else if(newInThisPolla){
-    // Ya tenía cuenta de otra Polla, pero es la primera vez que entra a ESTA.
     alert(`🎉 ¡Bienvenido, ${authedName}! Como ya tenías cuenta de otra Polla, usamos el mismo PIN y quedaste inscrito automáticamente en esta también.\n\n📲 Usa el botón "💬 Contactar al administrador" para avisarle a ${ADMIN_NAME} y completar tu inscripción.`);
   }
 
   hasSecurityAnswer_ = !stillNeedsSecurityAnswer;
   updateRecoveryButton_();
-  const myStatus = await getMyParticipantStatus_(true);
-  myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
-  if(myStatus?.referralCode && !myReferralCode) myReferralCode = myStatus.referralCode;
-  renderMyReferralCode_();
-  checkMyPaymentStatus();
 }
 
 // Pinta (o esconde) el código de invitación propio junto al botón de invitar.
@@ -3270,16 +3283,34 @@ async function refreshAdminPredictionSummary_(force=false){
   matches.forEach(m=>{ if(adminPredictionSummaryCache[m.id]===undefined) adminPredictionSummaryCache[m.id]=0; });
   return true;
 }
-async function refreshMyPredictions(){
-  if(!authedName || !authedPin || !currentPolla) return;
-  const result=await apiPost({action:'getMyPredictions',pollaId:currentPolla.id,name:authedName,pin:authedPin}).catch(()=>null);
-  if(!result?.ok || !result.predictions) return;
-  Object.entries(result.predictions).forEach(([matchId,p])=>{
+function mergeMyPredictions_(predictions){
+  if(!predictions || typeof predictions !== 'object' || !authedName) return;
+  Object.entries(predictions).forEach(([matchId,p])=>{
     const list=predictionsCache[matchId] || [];
     const idx=list.findIndex(x=>normalizeName(x.name)===normalizeName(authedName));
     if(idx>=0) list[idx]=p; else list.push(p);
     predictionsCache[matchId]=list;
   });
+}
+
+// C5: bootstrap privado del jugador en una sola llamada. Devuelve pronósticos
+// y estado mínimo de inscripción, evitando revalidar PIN/participación varias
+// veces seguidas justo después del login.
+async function getPlayerBootstrap_(){
+  if(!authedName || !authedPin || !currentPolla) return null;
+  return apiPost({
+    action:'getPlayerBootstrap',
+    pollaId:currentPolla.id,
+    name:authedName,
+    pin:authedPin
+  }).catch(()=>null);
+}
+
+async function refreshMyPredictions(){
+  if(!authedName || !authedPin || !currentPolla) return;
+  const result=await apiPost({action:'getMyPredictions',pollaId:currentPolla.id,name:authedName,pin:authedPin}).catch(()=>null);
+  if(!result?.ok || !result.predictions) return;
+  mergeMyPredictions_(result.predictions);
 }
 
 // Actualiza el caché local al instante tras un envío exitoso, sin tener que volver a pedirle
@@ -5158,7 +5189,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25C4';
+const APP_VERSION = 'V25C5';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
