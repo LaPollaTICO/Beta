@@ -1156,6 +1156,7 @@ function jsAttr(str){
 let allPollas = [];
 let allPollasLoadedAt_ = 0;
 let currentPolla = null;
+let landingScrollY_ = 0;
 let matches = [];
 let bulkMode = false;
 let selectedBulkMatches = new Set();
@@ -2306,6 +2307,8 @@ function goToLanding(fromHistory_=false){
   if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('landingScreen').classList.remove('hidden');
+  // Volver a Inicio conserva la posición donde el usuario estaba antes de entrar a la Polla.
+  requestAnimationFrame(() => window.scrollTo({top: landingScrollY_, left: 0, behavior: 'auto'}));
   currentPolla = null; matches = []; predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:null,data:null,at:0}; collapsedDateGroups.clear(); collapsedAdminGroups.clear(); authedName = null; authedPin = null; myReferralCode = null;
   selectedBulkMatches.clear();
   document.getElementById('streakBadge').classList.add('hidden');
@@ -2379,8 +2382,15 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   if(matchesTabsBeforeLoad_) matchesTabsBeforeLoad_.style.visibility = 'hidden';
 
   predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:currentPolla?.id||null,data:null,at:0}; selectedBulkMatches.clear();
+  // Al entrar desde Inicio recordamos dónde estaba el usuario para poder devolverlo ahí.
+  // La Polla, en cambio, siempre comienza arriba; no hereda el scroll de la pantalla principal.
+  if(!restoreFromUrl) landingScrollY_ = window.scrollY || window.pageYOffset || 0;
   document.getElementById('landingScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
+  requestAnimationFrame(() => {
+    const appTop = document.getElementById('appScreen')?.offsetTop || 0;
+    window.scrollTo({top: appTop, left: 0, behavior: 'auto'});
+  });
   document.getElementById('pollaTitle').textContent = `Polla "TICO" # ${currentPolla.number}`;
   document.getElementById('adminModalTitle').textContent = `Administrar Polla # ${currentPolla.number}`;
   // 🏆 El botón de Ganadores aparece en dos casos independientes:
@@ -5062,7 +5072,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25B1.3';
+const APP_VERSION = 'V25B1.4';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
