@@ -1178,6 +1178,26 @@ let collapsedAdminGroups = new Set();
 // (nunca en localStorage) y se reenvía en cada acción de admin, porque el
 // backend vuelve a validarlo en cada operación administrativa.
 let adminPin = null;
+let adminSessionToken = sessionStorage.getItem('tico:adminSession') || null;
+let adminSessionExpiresAt = Number(sessionStorage.getItem('tico:adminSessionExp') || 0);
+
+function clearAdminSession_(){
+  adminSessionToken = null;
+  adminSessionExpiresAt = 0;
+  sessionStorage.removeItem('tico:adminSession');
+  sessionStorage.removeItem('tico:adminSessionExp');
+}
+function hasValidAdminSession_(){
+  if(!adminSessionToken) return false;
+  if(adminSessionExpiresAt && Date.now() >= adminSessionExpiresAt){ clearAdminSession_(); return false; }
+  return true;
+}
+function withAdminSession_(obj){
+  const out = {...(obj||{})};
+  const action = String(out.action || '');
+  if(action !== 'authAdmin' && hasValidAdminSession_()) delete out.pin;
+  return out;
+}
 // Nombre de quien está administrando en esta sesión (se pregunta una vez al
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
@@ -1420,6 +1440,7 @@ function supabaseHeaders_(includeJson=false){
     'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
   };
   if(includeJson) headers['Content-Type'] = 'application/json';
+  if(hasValidAdminSession_()) headers['X-Admin-Session'] = adminSessionToken;
   return headers;
 }
 
@@ -1463,7 +1484,9 @@ async function parseApiResponse_(res){
 const inflightGetRequests_ = new Map();
 
 async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=true){
-  const qs = new URLSearchParams({action, ...params}).toString();
+  const requestParams_ = withAdminSession_({action, ...params});
+  delete requestParams_.action;
+  const qs = new URLSearchParams({action, ...requestParams_}).toString();
   const url = `${SUPABASE_FUNCTION_URL}?${qs}`;
   const key = url;
 
@@ -1483,6 +1506,11 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
       );
 
       const result = await parseApiResponse_(res);
+      if(result && !result.ok && (result.error === 'ADMIN_SESSION_EXPIRED' || result.error === 'ADMIN_SESSION_INVALID')){
+        clearAdminSession_();
+        adminPin = null;
+        result.error = 'Sesión de administrador vencida. Vuelve a entrar a Admin.';
+      }
 
       if(!res.ok && res.status >= 500 && retriesLeft > 0){
         await new Promise(r => setTimeout(r, 700));
@@ -1516,6 +1544,7 @@ function apiGetSilent(action, params={}){
 }
 
 async function apiPost(params, retriesLeft=2, silent=false){
+  params = withAdminSession_(params);
   const action = String(params?.action || '');
   const mutationActions = new Set([
     'savePrediction','savePredictionsBulk','setParticipantPaid','addParticipants','addMatch','editMatch',
@@ -1544,6 +1573,11 @@ async function apiPost(params, retriesLeft=2, silent=false){
       );
 
       const result = await parseApiResponse_(res);
+      if(result && !result.ok && (result.error === 'ADMIN_SESSION_EXPIRED' || result.error === 'ADMIN_SESSION_INVALID')){
+        clearAdminSession_();
+        adminPin = null;
+        result.error = 'Sesión de administrador vencida. Vuelve a entrar a Admin.';
+      }
 
       if(
         result &&
@@ -3253,7 +3287,7 @@ async function refreshAllPredictions(){
 // Solo para operaciones que realmente necesitan TODOS los scores
 // (backup o exportación global). La navegación normal usa un resumen liviano.
 async function refreshAdminPredictions(){
-  if(!adminPin || !currentPolla) return false;
+  if((!adminPin && !hasValidAdminSession_()) || !currentPolla) return false;
   const result = await apiPost({
     action:'getAdminAllPredictions',
     pollaId:currentPolla.id,
@@ -3267,7 +3301,7 @@ async function refreshAdminPredictions(){
 }
 
 async function refreshAdminPredictionSummary_(force=false){
-  if(!adminPin || !currentPolla) return false;
+  if((!adminPin && !hasValidAdminSession_()) || !currentPolla) return false;
   if(!force && adminPredictionSummaryPollaId===currentPolla.id && adminPredictionSummaryCache && Object.keys(adminPredictionSummaryCache).length){
     return true;
   }
@@ -3928,7 +3962,19 @@ function clearNewPollaForm(){
 // cerrado cuando ya se está mostrando (clic para volver a ocultarla).
 const EYE_OPEN_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_CLOSED_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4 5 10 5c1.2 0 2.3-.2 3.3-.5M22 12s-1.6 2-4.2 3.5M12 17v3M6 15.5L4 18M18 15.5l2 2.5"/></svg>';
-function openAdminGate(){
+async function openAdminGate(){
+  if(hasValidAdminSession_()){
+    if(!adminName) adminName = askAdminName_();
+    if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+      allPollasLoadedAt_ = Date.now();
+      allPollasScope_ = 'admin';
+    }
+    renderPollasAdminList();
+    renderSeasonInfoBox();
+    openOverlay('pollasAdminOverlay');
+    return;
+  }
   const input = document.getElementById('gatePinInput');
   input.value='';
   const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
@@ -3968,6 +4014,12 @@ async function checkGatePin(){
     const result = await apiPost({action:'authAdmin', pin});
     if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
     adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
     adminName = askAdminName_();
     closeOverlay('adminGateOverlay');
     // OPT V15: si la lista de Pollas se cargó hace segundos en el landing, no
@@ -5189,7 +5241,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25C5';
+const APP_VERSION = 'V25D1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
