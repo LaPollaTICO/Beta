@@ -1155,6 +1155,7 @@ function jsAttr(str){
 
 let allPollas = [];
 let allPollasLoadedAt_ = 0;
+let allPollasScope_ = 'landing'; // C2: landing=activas/próximas; admin=lista completa
 let currentPolla = null;
 let landingScrollY_ = 0;
 let matches = [];
@@ -2270,10 +2271,11 @@ async function initLanding(){
   const container = document.getElementById('pollasContainer');
   container.innerHTML = '<div class="loading-msg">Cargando...</div>';
   try{
-    const loaded = await apiGet('getPollas');
+    const loaded = await apiGet('getPollas', {scope:'landing'});
     if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'Respuesta inválida del servidor');
     allPollas = loaded;
     allPollasLoadedAt_ = Date.now();
+    allPollasScope_ = 'landing';
     landingLoadFailed_ = false;
     renderLanding();
 
@@ -2387,12 +2389,15 @@ window.addEventListener('popstate', (event) => {
 
 async function enterPolla(pollaId, restoreFromUrl=false){
   if(landingTimer){ clearInterval(landingTimer); landingTimer = null; }
-  currentPolla = allPollas.find(p => p.id === pollaId);
+  currentPolla = allPollas.find(p => String(p.id) === String(pollaId));
   if(!currentPolla){
-    const refreshed = await apiGet('getPollas');
-    if(!Array.isArray(refreshed)) throw new Error(refreshed?.error || 'No se pudo cargar la Polla');
-    allPollas = refreshed;
-    currentPolla = allPollas.find(p => String(p.id) === String(pollaId));
+    // C2: si venimos por enlace directo o desde "Pollas anteriores", pedimos
+    // solo ESTA Polla en lugar de descargar el histórico completo.
+    const fetched = await apiGet('getPollaSummary', {pollaId}).catch(()=>null);
+    if(fetched && fetched.id){
+      currentPolla = fetched;
+      if(!allPollas.some(p => String(p.id) === String(fetched.id))) allPollas.push(fetched);
+    }
   }
   if(!currentPolla){
     history.replaceState(null, '', location.pathname);
@@ -2468,14 +2473,13 @@ function updateCountdowns(){
 }
 
 /* ============ POLLAS ANTERIORES / GANADORES ============ */
-// 📄 Se muestran de 5 en 5 (con un botón "Ver más" para las siguientes 5) en
-// vez de la lista completa de una. No es paginación real contra el backend
-// (getPollas sigue trayendo todo, pero como la temporada se vacía cada año
-// con "Vaciar temporada" nunca se acumulan cientos) — esto es solo para que
-// la lista no se sienta larga de scrollear cuando ya hay varias Pollas.
+// 📄 C2: paginación REAL contra el backend. Al abrir "Pollas anteriores" solo
+// llegan 5 registros; "Ver más" pide las siguientes 5. La portada ya no carga
+// todo el histórico innecesariamente.
 const ARCHIVED_PAGE_SIZE_ = 5;
 let archivedPollasAll_ = [];
-let archivedPollasShown_ = 0;
+let archivedPollasTotal_ = 0;
+let archivedPollasHasMore_ = false;
 
 async function openArchivedPollas(){
   if(busyFlags.archived) return;
@@ -2483,29 +2487,51 @@ async function openArchivedPollas(){
   openOverlay('archivedOverlay');
   document.getElementById('archivedList').innerHTML = '<p class="hint">Cargando...</p>';
   try{
-    allPollas = await apiGet('getPollas').catch(()=>allPollas);
-    archivedPollasAll_ = allPollas.filter(p => p.status === 'finalizada');
-    archivedPollasShown_ = ARCHIVED_PAGE_SIZE_;
+    const page = await apiGet('getArchivedPollas', {limit:ARCHIVED_PAGE_SIZE_, offset:0});
+    archivedPollasAll_ = Array.isArray(page?.items) ? page.items : [];
+    archivedPollasTotal_ = Number(page?.total || archivedPollasAll_.length);
+    archivedPollasHasMore_ = !!page?.hasMore;
     renderArchivedPollasList_();
+  } catch(_){
+    document.getElementById('archivedList').innerHTML = '<p class="hint">No se pudieron cargar las Pollas anteriores.</p>';
   } finally { busyFlags.archived = false; }
 }
 function renderArchivedPollasList_(){
   const list = document.getElementById('archivedList');
   if(archivedPollasAll_.length === 0){ list.innerHTML = '<p class="hint">Todavía no hay Pollas finalizadas.</p>'; return; }
-  const visible = archivedPollasAll_.slice(0, archivedPollasShown_);
-  let html = visible.map(p => `
-    <div class="archived-item" onclick="closeOverlay('archivedOverlay'); enterPolla('${p.id}')">
+  let html = archivedPollasAll_.map(p => `
+    <div class="archived-item" onclick="enterArchivedPolla_('${p.id}')">
       <div><b>Polla "TICO" # ${escapeHtml(p.number)}</b><div class="hint">${p.participantCount} participantes · ${p.matchCount} partidos</div></div>
       <div>›</div>
     </div>`).join('');
-  if(archivedPollasShown_ < archivedPollasAll_.length){
-    html += `<button class="btn-secondary" style="margin-top:10px;" onclick="showMoreArchivedPollas_()">Ver más</button>`;
+  if(archivedPollasHasMore_){
+    html += `<button id="archivedMoreBtn" class="btn-secondary" style="margin-top:10px;" onclick="showMoreArchivedPollas_()">Ver más</button>`;
   }
   list.innerHTML = html;
 }
-function showMoreArchivedPollas_(){
-  archivedPollasShown_ = Math.min(archivedPollasShown_ + ARCHIVED_PAGE_SIZE_, archivedPollasAll_.length);
-  renderArchivedPollasList_();
+async function showMoreArchivedPollas_(){
+  if(busyFlags.archivedMore || !archivedPollasHasMore_) return;
+  busyFlags.archivedMore = true;
+  const btn = document.getElementById('archivedMoreBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Cargando...'; }
+  try{
+    const page = await apiGet('getArchivedPollas', {limit:ARCHIVED_PAGE_SIZE_, offset:archivedPollasAll_.length});
+    const incoming = Array.isArray(page?.items) ? page.items : [];
+    const known = new Set(archivedPollasAll_.map(p=>String(p.id)));
+    incoming.forEach(p=>{ if(!known.has(String(p.id))) archivedPollasAll_.push(p); });
+    archivedPollasTotal_ = Number(page?.total || archivedPollasTotal_);
+    archivedPollasHasMore_ = !!page?.hasMore;
+    renderArchivedPollasList_();
+  } catch(_){
+    showToast_('No se pudieron cargar más Pollas. Intenta otra vez.');
+    renderArchivedPollasList_();
+  } finally { busyFlags.archivedMore = false; }
+}
+async function enterArchivedPolla_(pollaId){
+  const p = archivedPollasAll_.find(x => String(x.id) === String(pollaId));
+  if(p && !allPollas.some(x => String(x.id) === String(p.id))) allPollas.push(p);
+  closeOverlay('archivedOverlay');
+  await enterPolla(pollaId);
 }
 
 function groupPodium(standings){
@@ -2553,7 +2579,7 @@ async function showWinners(pollaId){
   openOverlay('winnersOverlay');
   document.getElementById('winnersList').innerHTML = '<p class="hint">Cargando...</p>';
   try{
-    const polla = allPollas.find(p => p.id === pollaId) || await apiGet('getPollas').then(list => list.find(p=>p.id===pollaId));
+    const polla = allPollas.find(p => String(p.id) === String(pollaId)) || await apiGet('getPollaSummary',{pollaId});
     const standings = await apiGet('getStandings', {pollaId}).catch(()=>[]);
     document.getElementById('winnersTitle').textContent = `Ganadores · Polla # ${polla.number}`;
     const medals = ['🥇','🥈','🥉'];
@@ -3901,9 +3927,10 @@ async function checkGatePin(){
     closeOverlay('adminGateOverlay');
     // OPT V15: si la lista de Pollas se cargó hace segundos en el landing, no
     // la pedimos otra vez solo por abrir Admin. Si ya envejeció, sí se refresca.
-    if(!Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
-      allPollas = await apiGet('getPollas').catch(()=>[]);
+    if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
       allPollasLoadedAt_ = Date.now();
+      allPollasScope_ = 'admin';
     }
     renderPollasAdminList();
     renderSeasonInfoBox();
@@ -3943,7 +3970,7 @@ async function addPolla(){
   const result = await apiPost(params);
   if(!result.ok){ alert(result.error || 'No se pudo crear.'); return; }
   clearNewPollaForm();
-  allPollas = await apiGet('getPollas').catch(()=>[]);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
   renderPollasAdminList();
   renderLanding();
 }
@@ -3988,7 +4015,7 @@ async function archivePollaAction(id){
   if(!confirm('¿Archivar esta Polla?\n\nSe conserva completa para consulta, pero quedará congelada para edición.')) return;
   const result = await apiPost({action:'archivePolla', id, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo archivar.'); return; }
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   renderPollasAdminList();
   alert('🗄️ Polla archivada.');
 }
@@ -3996,7 +4023,7 @@ async function desarchivarPollaAction(id){
   if(!confirm('¿Desarchivar esta Polla?\n\nSaldrá del archivo, pero seguirá FINALIZADA y protegida. Para modificar datos deportivos después deberás usar “Reabrir para corregir”.')) return;
   const result = await apiPost({action:'desarchivarPolla', id, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo desarchivar.'); return; }
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   renderPollasAdminList();
   alert('📤 Polla desarchivada. Sigue finalizada y protegida; usa “Reabrir” si necesitas corregirla.');
 }
@@ -4004,7 +4031,7 @@ async function reopenPollaAction(id){
   if(!confirm('🔓 Reabrir para corregir\n\nLa Polla volverá a estado ACTUAL. Los campeones registrados por esta Polla se retirarán temporalmente hasta que vuelvas a finalizarla.\n\n¿Continuar?')) return;
   const result=await apiPost({action:'editPolla',id,status:'actual',pin:adminPin,adminName:adminName});
   if(!result.ok){alert(result.error||'No se pudo reabrir.');return;}
-  allPollas=await apiGet('getPollas').catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
+  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
 }
 function toggleEditPolla(id){ document.getElementById('editpolla-'+id).classList.toggle('show'); }
 async function savePollaEdit(id){
@@ -4021,7 +4048,7 @@ async function savePollaEdit(id){
   if(file){ params.imageBase64 = await compressImage(file, 700, 0.75); params.imageMime = 'image/jpeg'; }
   const result = await apiPost(params);
   if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   // 🏆 Si se editó la Polla que se está viendo ahora mismo, refleja el
   // cambio del botón de Ganadores de inmediato, sin tener que salir y
   // volver a entrar a la Polla.
@@ -4040,7 +4067,7 @@ async function setPollaStatus(id,status){
   }
   const result=await apiPost({action:'editPolla',id,status,pin:adminPin,adminName:adminName});
   if(!result.ok){alert(result.error||'No se pudo cambiar el estado.');return;}
-  allPollas=await apiGet('getPollas').catch(()=>[]);renderPollasAdminList();renderLanding();
+  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);renderPollasAdminList();renderLanding();
 }
 async function deletePolla(id){
   if(!confirm('⚠️ Esto borra la Polla PERMANENTEMENTE, junto con todos sus partidos, pronósticos y participantes. No se puede deshacer.\n\n¿Seguro que quieres continuar?')) return;
@@ -4052,7 +4079,7 @@ async function deletePolla(id){
   }
   const result = await apiPost(params);
   if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
-  allPollas = await apiGet('getPollas').catch(()=>[]);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
   renderPollasAdminList(); renderLanding();
 }
 
@@ -4131,7 +4158,7 @@ async function toggleShowWinnersLive(checked){
     return;
   }
   currentPolla.showWinnersLive = checked;
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   updateWinnersButtonVisibility();
 }
 
@@ -4282,7 +4309,7 @@ async function clearSeasonData(){
   const result = await apiPost({action:'clearSeasonData', pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo vaciar la temporada.'); return; }
   alert(`✅ Limpieza completada.\n\nPollas borradas: ${result.pollasDeleted}\nPollas que estaban archivadas: ${result.archivosDeleted}\nPartidos borrados: ${result.matchesDeleted}\nPronósticos borrados: ${result.predictionsDeleted}\nParticipaciones borradas: ${result.participantsDeleted}\n\nLa nueva temporada, Ganadores, Temporadas y el Historial de Admin permanecen intactos.`);
-  allPollas = await apiGet('getPollas').catch(()=>[]);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
   renderPollasAdminList();
   renderLanding();
   renderSeasonInfoBox();
@@ -4366,7 +4393,7 @@ async function addParticipants(){
   if(!result.ok){alert(result.error||'No se pudieron agregar.');return;}
   invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null;
   document.getElementById('participantsInput').value=''; await renderParticipantsList();
-  allPollas=await apiGet('getPollas').catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla;
+  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla;
   renderAdminMatchList();
   if(result.activationCodes?.length) showActivationCodes(result.activationCodes); else alert(`${result.added} participante(s) agregados.`);
 }
@@ -4381,7 +4408,7 @@ async function deleteParticipant(name){
   if(!result.ok){alert(result.error||'No se pudo eliminar.');return;}
   invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null; invalidateStandingsCaches_();
   alert(result.deletedGlobally?`✅ ${name} fue eliminado de la Polla y también se eliminó su cuenta global.`:`✅ ${name} fue eliminado de esta Polla. Su cuenta e historial se conservaron.`);
-  await renderParticipantsList(); allPollas=await apiGet('getPollas').catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla; await loadMatches(); renderAdminMatchList();
+  await renderParticipantsList(); allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla; await loadMatches(); renderAdminMatchList();
 }
 function openIdentityManager(name){ pendingIdentityName=name; document.getElementById('identityCurrentLabel').textContent=`Jugador actual: ${name}`; openOverlay('identityAdminOverlay'); }
 async function startGlobalRename(){
@@ -4424,7 +4451,7 @@ async function addMatch(){
       clearNewMatchForm();
       await loadMatches();
       renderAdminMatchList();
-      allPollas = await apiGet('getPollas').catch(()=>allPollas);
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
     }
   } finally { btn.disabled = false; btn.textContent = 'Agregar partido'; }
 }
@@ -4625,7 +4652,7 @@ async function deleteMatchAdmin(id){
   invalidateStandingsCaches_();
   await loadMatches();
   renderAdminMatchList();
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
 }
 async function savePremios(){
   const premio1 = document.getElementById('premio1Input').value.trim();
@@ -4656,7 +4683,7 @@ async function saveArchivedPremiosFix_(){
   const result = await apiPost({action:'editArchivedPremios', id: currentPolla.id, premio1, premio2, premio3, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
   currentPolla.premio1 = premio1; currentPolla.premio2 = premio2; currentPolla.premio3 = premio3;
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   document.getElementById('archivedPremiosForm').style.display = 'none';
   alert('✅ Premios corregidos.');
 }
@@ -4690,7 +4717,7 @@ async function finalizePolla(){
   const result=await apiPost({action:'editPolla', id: currentPolla.id, status:'finalizada', pin: adminPin, adminName: adminName});
   if(!result.ok){alert(result.error||'No se pudo finalizar.');return;}
   currentPolla.status = 'finalizada';
-  allPollas = await apiGet('getPollas').catch(()=>allPollas);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
   const updated = allPollas.find(p => p.id === currentPolla.id);
   if(updated) currentPolla = updated;
   alert('🏁 Polla finalizada y archivada. Ya se puede ver su tabla y ganadores, pero para corregirla hay que desarchivarla y luego reabrirla explícitamente desde "Administrar Pollas".');
@@ -5117,7 +5144,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25C1';
+const APP_VERSION = 'V25C2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
