@@ -718,6 +718,26 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
   </div>
 </div>
 
+<!-- ======= ADMIN: CONFIRMACIÓN SENSIBLE ======= -->
+<div class="overlay" id="adminConfirmOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="cancelAdminConfirmation_()">✕</button>
+    <div class="modal-icon">🛡️</div>
+    <h2>Confirmar acción</h2>
+    <p class="hint" id="adminConfirmMessage" style="text-align:center;margin-bottom:14px;">Esta acción necesita volver a verificar tu clave de administrador.</p>
+    <div class="pin-box"><label>Clave de administrador</label>
+      <div class="pin-input-wrap">
+        <input id="adminConfirmPinInput" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="admin" data-lpignore="true" data-1p-ignore placeholder="Clave de administrador" style="-webkit-text-security:disc">
+        <button type="button" class="pin-toggle" id="adminConfirmPinToggle" title="Mostrar/ocultar clave" onclick="toggleAdminConfirmPinVisibility_()">
+          <svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn-primary" id="adminConfirmBtn" onclick="submitAdminConfirmation_()">Confirmar</button>
+    <button class="btn-secondary" onclick="cancelAdminConfirmation_()">Cancelar</button>
+  </div>
+</div>
+
 <!-- ======= ADMIN: POLLAS ======= -->
 <div class="overlay" id="pollasAdminOverlay">
   <div class="modal">
@@ -1180,6 +1200,7 @@ let collapsedAdminGroups = new Set();
 let adminPin = null;
 let adminSessionToken = sessionStorage.getItem('tico:adminSession') || null;
 let adminSessionExpiresAt = Number(sessionStorage.getItem('tico:adminSessionExp') || 0);
+let adminStrongConfirmToken_ = null;
 
 function clearAdminSession_(){
   adminSessionToken = null;
@@ -1441,6 +1462,7 @@ function supabaseHeaders_(includeJson=false){
   };
   if(includeJson) headers['Content-Type'] = 'application/json';
   if(hasValidAdminSession_()) headers['X-Admin-Session'] = adminSessionToken;
+  if(adminStrongConfirmToken_) headers['X-Admin-Confirm'] = adminStrongConfirmToken_;
   return headers;
 }
 
@@ -1571,7 +1593,6 @@ async function apiPost(params, retriesLeft=2, silent=false){
           body:JSON.stringify(params || {})
         }
       );
-
       const result = await parseApiResponse_(res);
       if(result && !result.ok && (result.error === 'ADMIN_SESSION_EXPIRED' || result.error === 'ADMIN_SESSION_INVALID')){
         clearAdminSession_();
@@ -4044,6 +4065,73 @@ function adminAuthErrorMessage_(result){
   }
   return 'Clave incorrecta.';
 }
+let pendingAdminConfirm_ = null;
+function toggleAdminConfirmPinVisibility_(){
+  const input = document.getElementById('adminConfirmPinInput');
+  const btn = document.getElementById('adminConfirmPinToggle');
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  input.focus();
+}
+function cancelAdminConfirmation_(){
+  closeOverlay('adminConfirmOverlay');
+  const pending = pendingAdminConfirm_;
+  pendingAdminConfirm_ = null;
+  if(pending) pending.resolve(null);
+}
+function requireAdminConfirmation_(purpose, message){
+  if(!hasValidAdminSession_()){
+    alert('Tu sesión de administrador venció. Vuelve a entrar a Admin.');
+    return Promise.resolve(null);
+  }
+  if(pendingAdminConfirm_) return Promise.resolve(null);
+  return new Promise(resolve=>{
+    pendingAdminConfirm_ = {purpose, resolve};
+    const input = document.getElementById('adminConfirmPinInput');
+    input.value = '';
+    input.dataset.ticoMasked = '1';
+    input.type = 'text';
+    input.style.webkitTextSecurity = 'disc';
+    document.getElementById('adminConfirmPinToggle').innerHTML = EYE_OPEN_SVG;
+    document.getElementById('adminConfirmMessage').textContent = message || 'Esta acción necesita volver a verificar tu clave de administrador.';
+    openOverlay('adminConfirmOverlay');
+    setTimeout(()=>input.focus(), 50);
+  });
+}
+async function submitAdminConfirmation_(){
+  if(!pendingAdminConfirm_) return;
+  const pin = document.getElementById('adminConfirmPinInput').value;
+  if(!pin){ alert('Escribe la clave de administrador.'); return; }
+  const btn = document.getElementById('adminConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Verificando...';
+  try{
+    const purpose = pendingAdminConfirm_.purpose;
+    const result = await apiPost({action:'authAdminConfirm', pin, confirmAction:purpose}, 0, true);
+    if(!result?.ok){ alert(adminAuthErrorMessage_(result || {})); return; }
+    const pending = pendingAdminConfirm_;
+    pendingAdminConfirm_ = null;
+    closeOverlay('adminConfirmOverlay');
+    pending.resolve(result.confirmToken || null);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Confirmar';
+  }
+}
+async function withSensitiveAdminConfirmation_(purpose, message, fn){
+  const token = await requireAdminConfirmation_(purpose, message);
+  if(!token) return null;
+  adminStrongConfirmToken_ = token;
+  try{ return await fn(); }
+  finally { if(adminStrongConfirmToken_ === token) adminStrongConfirmToken_ = null; }
+}
+
 // Pregunta el nombre de quien administra, para que quede en el historial de
 // cambios quién hizo cada acción. Si cancela, queda como "Admin".
 function askAdminName_(){
@@ -4126,9 +4214,11 @@ async function desarchivarPollaAction(id){
 }
 async function reopenPollaAction(id){
   if(!confirm('🔓 Reabrir para corregir\n\nLa Polla volverá a estado ACTUAL. Los campeones registrados por esta Polla se retirarán temporalmente hasta que vuelvas a finalizarla.\n\n¿Continuar?')) return;
-  const result=await apiPost({action:'editPolla',id,status:'actual',pin:adminPin,adminName:adminName});
-  if(!result.ok){alert(result.error||'No se pudo reabrir.');return;}
-  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
+  await withSensitiveAdminConfirmation_('reopenPolla','Confirma tu clave para reabrir una Polla finalizada.', async()=>{
+    const result=await apiPost({action:'editPolla',id,status:'actual',pin:adminPin,adminName:adminName});
+    if(!result.ok){alert(result.error||'No se pudo reabrir.');return;}
+    allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
+  });
 }
 function toggleEditPolla(id){ document.getElementById('editpolla-'+id).classList.toggle('show'); }
 async function savePollaEdit(id){
@@ -4168,16 +4258,18 @@ async function setPollaStatus(id,status){
 }
 async function deletePolla(id){
   if(!confirm('⚠️ Esto borra la Polla PERMANENTEMENTE, junto con todos sus partidos, pronósticos y participantes. No se puede deshacer.\n\n¿Seguro que quieres continuar?')) return;
-  const params = {action:'deletePolla', id, pin: adminPin, adminName: adminName};
-  const polla = allPollas.find(p => p.id === id);
-  if(polla && polla.status === 'finalizada'){
-    params.keepPoints = confirm('¿Quieres CONSERVAR los puntos de esta Polla en la tabla acumulada del año?\n\n✅ Aceptar → Conservar (se suman al arrastre)\n❌ Cancelar → Borrarlos junto con la Polla').toString();
-    params.keepTitle = confirm('¿Quieres CONSERVAR el título de campeón de esta Polla en la tabla de Ganadores?\n\n✅ Aceptar → Conservar el título\n❌ Cancelar → Quitarle esa victoria al campeón').toString();
-  }
-  const result = await apiPost(params);
-  if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
-  renderPollasAdminList(); renderLanding();
+  await withSensitiveAdminConfirmation_('deletePolla','Confirma tu clave para eliminar esta Polla permanentemente.', async()=>{
+    const params = {action:'deletePolla', id, pin: adminPin, adminName: adminName};
+    const polla = allPollas.find(p => p.id === id);
+    if(polla && polla.status === 'finalizada'){
+      params.keepPoints = confirm('¿Quieres CONSERVAR los puntos de esta Polla en la tabla acumulada del año?\n\n✅ Aceptar → Conservar (se suman al arrastre)\n❌ Cancelar → Borrarlos junto con la Polla').toString();
+      params.keepTitle = confirm('¿Quieres CONSERVAR el título de campeón de esta Polla en la tabla de Ganadores?\n\n✅ Aceptar → Conservar el título\n❌ Cancelar → Quitarle esa victoria al campeón').toString();
+    }
+    const result = await apiPost(params);
+    if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
+    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+    renderPollasAdminList(); renderLanding();
+  });
 }
 
 /* ============ ADMIN: DENTRO DE UNA POLLA ============ */
@@ -4401,7 +4493,8 @@ async function closeSeason(){
   if(label === null) return;
   const sure = confirm(`⚠️ Esto va a:\n\n1) Guardar (archivar) la tabla acumulada del año TAL COMO ESTÁ ahora mismo, con quiénes clasificaron.\n2) Reiniciar la tabla acumulada del año a 0 para la próxima temporada.\n\nOJO: si todavía tienes una Polla gratuita en curso, ciérrala o termínala ANTES de esto. Una vez que reinicias la tabla, ya no reflejará quién iba clasificando en el año que se archivó.\n\nNo se borra ningún historial de Pollas ni pronósticos viejos, pero esta acción no se puede deshacer fácilmente. ¿Seguro que quieres cerrar la temporada "${label}"?`);
   if(!sure) return;
-  const result = await apiPost({action:'closeSeason', seasonLabel: label, pin: adminPin, adminName: adminName});
+  const result = await withSensitiveAdminConfirmation_('closeSeason','Confirma tu clave para cerrar la temporada.', ()=>apiPost({action:'closeSeason', seasonLabel: label, pin: adminPin, adminName: adminName}));
+  if(!result) return;
   if(!result.ok){ alert(result.error || 'No se pudo cerrar la temporada.'); return; }
   alert(`✅ Temporada "${result.seasonLabel}" cerrada.\n\n${result.qualifiedCount} de ${result.totalParticipants} quedaron clasificados y archivados.\nLa tabla acumulada del año ya está en 0 para la nueva temporada.`);
   renderSeasonInfoBox();
@@ -4415,7 +4508,8 @@ async function clearSeasonData(){
   if(!sure1) return;
   const sure2 = confirm('Última confirmación: esta acción NO se puede deshacer.\n\n¿Vaciar la última temporada cerrada ahora?');
   if(!sure2) return;
-  const result = await apiPost({action:'clearSeasonData', pin: adminPin, adminName: adminName});
+  const result = await withSensitiveAdminConfirmation_('clearSeasonData','Confirma tu clave para vaciar los datos cerrados de la temporada.', ()=>apiPost({action:'clearSeasonData', pin: adminPin, adminName: adminName}));
+  if(!result) return;
   if(!result.ok){ alert(result.error || 'No se pudo vaciar la temporada.'); return; }
   alert(`✅ Limpieza completada.\n\nPollas borradas: ${result.pollasDeleted}\nPollas que estaban archivadas: ${result.archivosDeleted}\nPartidos borrados: ${result.matchesDeleted}\nPronósticos borrados: ${result.predictionsDeleted}\nParticipaciones borradas: ${result.participantsDeleted}\n\nLa nueva temporada, Ganadores, Temporadas y el Historial de Admin permanecen intactos.`);
   allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
@@ -4513,7 +4607,8 @@ async function deleteParticipant(name){
     ? `⚠️ ${name} no tiene otro historial real en TICO.\n\nSe eliminarán:\n• su participación y pronósticos de ESTA Polla\n• su cuenta global\n• su PIN y recuperación\n• cualquier activación pendiente\n\nEl nombre “${name}” volverá a quedar disponible.`
     : `Se eliminarán la participación y los pronósticos de ${name} en ESTA Polla.\n\n✅ Su cuenta, PIN e historial anterior se conservarán porque ya es un jugador consolidado.`;
   if(!confirm(`¿Eliminar a ${name}?\n\n${detail}\n\n¿Continuar?`))return;
-  const result=await apiPost({action:'deleteParticipantFull',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName});
+  const result=await withSensitiveAdminConfirmation_('deleteParticipantFull',`Confirma tu clave para eliminar a ${name} de la Polla.`,()=>apiPost({action:'deleteParticipantFull',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName}));
+  if(!result) return;
   if(!result.ok){alert(result.error||'No se pudo eliminar.');return;}
   invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null; invalidateStandingsCaches_();
   alert(result.deletedGlobally?`✅ ${name} fue eliminado de la Polla y también se eliminó su cuenta global.`:`✅ ${name} fue eliminado de esta Polla. Su cuenta e historial se conservaron.`);
@@ -4752,16 +4847,21 @@ async function submitResult(matchId){
 }
 async function deleteMatchAdmin(id){
   if(!confirm('¿Eliminar este partido y sus pronósticos?')) return;
-  let result = await apiPost({action:'deleteMatch', id, pin: adminPin, adminName: adminName});
-  if(!result.ok && result.requiresStrongConfirmation){ if(!confirm(`${result.error}\n\n¿Borrar de todas formas?`)) return; result=await apiPost({action:'deleteMatch',id,forceDeleteWithPredictions:'true',pin:adminPin,adminName:adminName}); }
-  if(!result.ok){ alert(result.error || 'No se pudo eliminar el partido.'); return; }
-  delete predictionsCache[id];
-  delete adminPredictionsCache[id];
-  adminPredictionSummaryPollaId = null;
-  invalidateStandingsCaches_();
-  await loadMatches();
-  renderAdminMatchList();
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  await withSensitiveAdminConfirmation_('deleteMatch','Confirma tu clave para eliminar este partido.', async()=>{
+    let result = await apiPost({action:'deleteMatch', id, pin: adminPin, adminName: adminName});
+    if(!result.ok && result.requiresStrongConfirmation){
+      if(!confirm(`${result.error}\n\n¿Borrar de todas formas?`)) return;
+      result = await apiPost({action:'deleteMatch',id,forceDeleteWithPredictions:'true',pin:adminPin,adminName:adminName});
+    }
+    if(!result.ok){ alert(result.error || 'No se pudo eliminar el partido.'); return; }
+    delete predictionsCache[id];
+    delete adminPredictionsCache[id];
+    adminPredictionSummaryPollaId = null;
+    invalidateStandingsCaches_();
+    await loadMatches();
+    renderAdminMatchList();
+    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  });
 }
 async function savePremios(){
   const premio1 = document.getElementById('premio1Input').value.trim();
@@ -5253,7 +5353,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D1.1';
+const APP_VERSION = 'V25D2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
