@@ -4186,12 +4186,24 @@ function clearNewMatchForm(){
   document.getElementById('newIsStar').checked = false;
 }
 async function openAdmin(){
-  const pin = prompt('Clave de administrador:');
-  if(pin === null) return;
-  const result = await apiPost({action:'authAdmin', pin});
-  if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
-  adminPin = pin;
-  adminName = askAdminName_();
+  // D1.1: si ya existe una sesión Admin válida, reutilizarla también al abrir
+  // el panel interno de una Polla. Antes este camino seguía pidiendo la clave
+  // siempre, aunque openAdminGate() ya hubiera creado una sesión temporal.
+  if(!hasValidAdminSession_()){
+    const pin = prompt('Clave de administrador:');
+    if(pin === null) return;
+    const result = await apiPost({action:'authAdmin', pin});
+    if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
+    adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
+  }
+
+  if(!adminName) adminName = askAdminName_();
   switchAdminTab('tabParticipantes');
   renderParticipantsList();
   // Mismo comportamiento que la vista del jugador: HOY abierto; cualquier otro día recogido.
@@ -5241,7 +5253,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D1';
+const APP_VERSION = 'V25D1.1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
