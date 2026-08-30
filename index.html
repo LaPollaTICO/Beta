@@ -2298,9 +2298,6 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   document.getElementById('inviteRow').classList.add('hidden');
   resetAuthUI();
   await loadMatches();
-  const viewBeforeNatural_ = matchesView_;
-  chooseNaturalMatchesView_();
-  if(matchesView_ !== viewBeforeNatural_) await renderMatches();
   if(countdownTimer) clearInterval(countdownTimer);
   countdownTimer = setInterval(updateCountdowns, 30000);
 }
@@ -2940,6 +2937,12 @@ async function loadMatches(){
   }
 
   matchesLoadFailed_ = false;
+
+  // Conservamos qué jornadas tenía abiertas/cerradas el Admin antes de refrescar
+  // los partidos. Subir un resultado no debe contraerle la jornada en la cara.
+  const previousAdminCollapsed_ = new Set(collapsedAdminGroups);
+  const adminWasOpen_ = document.getElementById('adminOverlay')?.classList.contains('show');
+
   matches = matchesResult;
 
   const validIds = new Set(matches.map(m=>String(m.id)));
@@ -2949,7 +2952,17 @@ async function loadMatches(){
   [...predictionTrendsLoadedMatches].forEach(id=>{ if(!validIds.has(String(id))) predictionTrendsLoadedMatches.delete(id); });
 
   collapsedDateGroups = computeDefaultCollapsedGroups();
-  collapsedAdminGroups = computeDefaultCollapsedGroups();
+  if(adminWasOpen_){
+    const validDateKeys_ = new Set(matches.map(m => dateGroupKey(m.closeAt)));
+    collapsedAdminGroups = new Set([...previousAdminCollapsed_].filter(key => validDateKeys_.has(key)));
+  } else {
+    collapsedAdminGroups = computeDefaultCollapsedGroups();
+  }
+
+  // Elegimos Por jugar / Resueltos ANTES del primer render. Así una Polla que
+  // ya tiene 0 partidos por jugar entra directamente a Resueltos sin mostrar
+  // primero por un instante la pestaña vacía de Por jugar.
+  chooseNaturalMatchesView_();
 
   const visibleIds=matches
     .filter(m=>!collapsedDateGroups.has(dateGroupKey(m.closeAt)) && !m.isCanceled && !m.resultSubmitted)
@@ -4884,16 +4897,54 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25A1';
+const APP_VERSION = 'V25A2';
+const LAST_APPLIED_SW_KEY_ = 'tico:lastAppliedServiceWorkerVersion';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
+let offeredWorkerVersion_ = '';
 
 function removeAppUpdateNotice_(){
   document.getElementById('appUpdateNotice')?.remove();
 }
 
-function showAppUpdateNotice(){
+function getWorkerVersion_(worker){
+  return new Promise(resolve => {
+    if(!worker){ resolve(''); return; }
+    const channel = new MessageChannel();
+    let done = false;
+    const finish = value => {
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(String(value || ''));
+    };
+    channel.port1.onmessage = ev => finish(ev.data?.version || '');
+    const timer = setTimeout(() => finish(''), 1200);
+    try{ worker.postMessage({type:'GET_VERSION'}, [channel.port2]); }
+    catch(_){ finish(''); }
+  });
+}
+
+async function offerWaitingWorker_(reg){
+  const waiting = reg?.waiting;
+  if(!waiting || !navigator.serviceWorker.controller) return;
+
+  // Preguntamos al propio SW qué versión es. Evita volver a ofrecer exactamente
+  // la misma actualización después de la recarga o durante propagación de GitHub.
+  const waitingVersion = await getWorkerVersion_(waiting);
+  if(waitingVersion && waitingVersion === APP_VERSION) return;
+
+  let lastApplied = '';
+  try{ lastApplied = sessionStorage.getItem(LAST_APPLIED_SW_KEY_) || ''; }catch(_){}
+  if(waitingVersion && waitingVersion === lastApplied) return;
+  if(waitingVersion && waitingVersion === offeredWorkerVersion_) return;
+
+  offeredWorkerVersion_ = waitingVersion || 'unknown';
+  showAppUpdateNotice(waitingVersion);
+}
+
+function showAppUpdateNotice(waitingVersion=''){
   if(document.getElementById('appUpdateNotice')) return;
   const bar = document.createElement('div');
   bar.id = 'appUpdateNotice';
@@ -4913,7 +4964,7 @@ function showAppUpdateNotice(){
     <button id="applyAppUpdateBtn" type="button" style="flex:0 0 auto;border:0;border-radius:10px;padding:9px 12px;background:#F2C14E;color:#07110F;font-weight:800;cursor:pointer">Actualizar</button>`;
   document.body.appendChild(bar);
 
-  document.getElementById('applyAppUpdateBtn')?.addEventListener('click', () => {
+  document.getElementById('applyAppUpdateBtn')?.addEventListener('click', async () => {
     if(appUpdateApplying) return;
     if(hasUnsavedPredictions_()){
       showToast_('📝 Guarda tus pronósticos pendientes antes de actualizar');
@@ -4925,6 +4976,12 @@ function showAppUpdateNotice(){
       appUpdateRegistration?.update().catch(()=>{});
       return;
     }
+
+    const confirmedVersion = waitingVersion || await getWorkerVersion_(waiting);
+    try{
+      if(confirmedVersion) sessionStorage.setItem(LAST_APPLIED_SW_KEY_, confirmedVersion);
+    }catch(_){}
+
     appUpdateApplying = true;
     const btn = document.getElementById('applyAppUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
@@ -4935,24 +4992,21 @@ function showAppUpdateNotice(){
 if('serviceWorker' in navigator){
   window.addEventListener('load', async () => {
     try{
-      // URL estable + updateViaCache:none: evita registros/versiones cruzadas por
-      // cambiar ?v= en cada release y obliga a comprobar sw.js contra la red.
       const reg = await navigator.serviceWorker.register('sw.js', {updateViaCache:'none'});
       appUpdateRegistration = reg;
 
-      const offerWaiting_ = () => {
-        if(reg.waiting && navigator.serviceWorker.controller) showAppUpdateNotice();
-      };
+      await offerWaitingWorker_(reg);
 
-      offerWaiting_();
       reg.addEventListener('updatefound', () => {
         const worker = reg.installing;
         if(!worker) return;
         worker.addEventListener('statechange', () => {
-          if(worker.state === 'installed') setTimeout(offerWaiting_, 0);
+          if(worker.state === 'installed') void offerWaitingWorker_(reg);
         });
       });
 
+      // Una sola comprobación explícita al abrir. El registro ya hace su chequeo
+      // normal; el handshake de versión impide ofrecer dos veces el mismo worker.
       reg.update().catch(()=>{});
 
       navigator.serviceWorker.addEventListener('controllerchange', () => {
