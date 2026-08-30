@@ -512,7 +512,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
   .check-btn:hover, .submit-btn:not(:disabled):hover, .btn-primary:hover, .btn-secondary:hover, .btn-whatsapp:hover{filter:brightness(1.08); transition:filter 0.15s;}
 }
 
-.secure-backup-box{border:1px solid rgba(217,170,62,.38);background:rgba(217,170,62,.06);border-radius:16px;padding:16px;margin-top:6px}.secure-backup-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.secure-backup-head p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.45}.secure-backup-badge{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--muted)}.secure-backup-badge.ok{border-color:rgba(64,190,120,.45);color:#8fe0ad;background:rgba(64,190,120,.08)}.secure-backup-status{margin-top:14px;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);font-size:13px;line-height:1.45}.secure-backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.secure-backup-actions .btn-secondary{margin:0}.compaction-precheck{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(0,0,0,.14)}.compaction-precheck-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900}.compaction-checks{display:grid;gap:7px;margin-top:10px}.compaction-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35}.compaction-check .mark{width:18px;flex:0 0 18px;text-align:center}.compaction-check small{display:block;color:#111;margin-top:1px}.compaction-check b{color:#111}.compaction-ready{color:#111}.compaction-precheck .secure-backup-badge.ok{color:#111}.compaction-blocked{color:#111}.compaction-precheck .btn-secondary{border-color:rgba(255,255,255,.78);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}@media(max-width:520px){.secure-backup-head{flex-direction:column}.secure-backup-actions{grid-template-columns:1fr}}
+.secure-backup-box{border:1px solid rgba(217,170,62,.38);background:rgba(217,170,62,.06);border-radius:16px;padding:16px;margin-top:6px}.secure-backup-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.secure-backup-head p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.45}.secure-backup-badge{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--muted)}.secure-backup-badge.ok{border-color:rgba(64,190,120,.45);color:#8fe0ad;background:rgba(64,190,120,.08)}.secure-backup-status{margin-top:14px;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);font-size:13px;line-height:1.45}.secure-backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.secure-backup-actions .btn-secondary{margin:0}.compaction-precheck{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(0,0,0,.14)}.compaction-precheck-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900}.compaction-checks{display:grid;gap:7px;margin-top:10px}.compaction-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35}.compaction-check .mark{width:18px;flex:0 0 18px;text-align:center}.compaction-check small{display:block;color:#111;margin-top:1px}.compaction-check b{color:#111}.compaction-ready{color:#111}.compaction-precheck .secure-backup-badge.ok{color:#111}.compaction-blocked{color:#111}.compaction-precheck .btn-secondary{border-color:rgba(255,255,255,.78);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}.final-audit-status,.final-audit-status *{color:#111!important}.final-audit-check{color:#111}.final-audit-check b,.final-audit-check small{color:#111}.final-audit-box .btn-secondary{border-color:rgba(255,255,255,.88);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset}@media(max-width:520px){.secure-backup-head{flex-direction:column}.secure-backup-actions{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1040,6 +1040,12 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
           <button class="btn-secondary" id="storageCleanupBtn" style="margin-top:10px;" onclick="cleanupCompactedStorage_()">🧹 Limpiar imágenes respaldadas</button>
           <p class="hint" style="margin:8px 0 0;color:#111;">El ZIP privado y el snapshot histórico no se eliminan. Las imágenes externas que no pertenecen a Supabase se conservan.</p>
         </div>
+        <div class="compaction-precheck final-audit-box" style="margin-top:10px;">
+          <div class="compaction-precheck-title"><span>Auditoría final del histórico</span><span id="finalArchiveAuditBadge" class="secure-backup-badge">Sin revisar</span></div>
+          <div id="finalArchiveAuditStatus" class="hint final-audit-status" style="margin-top:8px;color:#111;">F6 comprueba que el histórico, respaldo, acumulada y limpieza quedaron coherentes después de compactar.</div>
+          <div id="finalArchiveAuditChecks" class="compaction-checks final-audit-status"></div>
+          <button class="btn-secondary" id="finalArchiveAuditBtn" style="margin-top:10px;" onclick="runFinalArchiveAudit_()">🧾 Ejecutar auditoría final</button>
+          <p class="hint final-audit-status" style="margin:8px 0 0;color:#111;">La auditoría es manual y no borra nada. El ZIP se vuelve a verificar únicamente cuando pulsas este botón.</p>
         <p class="hint" style="margin-top:10px;">Solo se puede generar cuando la Polla está finalizada y archivada. El ZIP se guarda en Storage privado y además se descarga mediante un enlace temporal.</p>
       </div>
       <h3 style="margin-top:18px;">Respaldo JSON manual</h3>
@@ -1413,7 +1419,7 @@ const ADMIN_SESSION_ACTIONS_ = new Set([
   'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
   'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
   'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
-  'getStorageCleanupStatus','cleanupCompactedPollaStorage','closeSeason','clearSeasonData',
+  'getStorageCleanupStatus','cleanupCompactedPollaStorage','getFinalArchiveAuditStatus','runFinalArchiveAudit','closeSeason','clearSeasonData',
   'archivePolla','desarchivarPolla','editArchivedPremios','getAdminMatchPredictions','getAdminAllPredictions',
   'getAdminPredictionSummary','setAppConfig','getSystemHealth'
 ]);
@@ -4829,7 +4835,7 @@ function switchAdminTab(tabId){
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
   if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
   if(tabId === 'tabSalud') refreshSystemHealth_();
-  if(tabId === 'tabDatos'){ refreshSecureBackupStatus_(false); refreshStorageCleanupStatus_(false); }
+  if(tabId === 'tabDatos'){ refreshSecureBackupStatus_(false); refreshStorageCleanupStatus_(false); refreshFinalArchiveAuditStatus_(false); }
 }
 
 function renderAdminOverview_(){
@@ -5929,6 +5935,58 @@ ${Number(result.skippedCount)||0} imagen(es) externa(s) conservadas.
 El ZIP seguro y el histórico compacto permanecen intactos.`);
 }
 
+
+function renderFinalArchiveAudit_(result){
+  const badge=document.getElementById('finalArchiveAuditBadge');
+  const status=document.getElementById('finalArchiveAuditStatus');
+  const list=document.getElementById('finalArchiveAuditChecks');
+  const btn=document.getElementById('finalArchiveAuditBtn');
+  if(!badge||!status||!list||!btn) return;
+  badge.style.color='#111'; status.style.color='#111';
+  if(!result?.audited){
+    badge.textContent='Sin revisar'; badge.className='secure-backup-badge';
+    status.textContent='Ejecuta la auditoría final para comprobar histórico, ZIP, acumulada y limpieza después de la compactación.';
+    list.innerHTML=''; btn.disabled=false; return;
+  }
+  const ok=result.status==='passed' || result.ok===true;
+  badge.textContent=ok?'✓ Protegida':'Revisar';
+  badge.className=ok?'secure-backup-badge ok':'secure-backup-badge';
+  badge.style.color='#111';
+  const when=result.auditedAt?fmtDate(result.auditedAt):'fecha no disponible';
+  status.textContent=ok?`Auditoría final aprobada ${when}. El histórico compacto quedó coherente y protegido.`:`La última auditoría (${when}) detectó algo que requiere revisión.`;
+  const checks=result.report?.checks || result.checks || [];
+  list.innerHTML=checks.map(c=>`<div class="compaction-check final-audit-check"><span class="mark">${c.ok?'✅':'❌'}</span><span><b>${escapeHtml(c.label||'Comprobación')}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</span></div>`).join('');
+  btn.disabled=false; btn.textContent='🧾 Ejecutar auditoría final';
+}
+async function refreshFinalArchiveAuditStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getFinalArchiveAuditStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar la auditoría final.');
+    renderFinalArchiveAudit_(result);
+  }catch(e){
+    const status=document.getElementById('finalArchiveAuditStatus');
+    if(status){status.style.color='#111';status.textContent='No se pudo revisar el estado de la auditoría final.';}
+    if(showErrors) alert(e?.message||'No se pudo revisar la auditoría final.');
+  }
+}
+async function runFinalArchiveAudit_(){
+  if(!currentPolla) return;
+  if(!confirm(`🧾 Auditoría final — Polla #${currentPolla.number}\n\nSe verificará nuevamente el ZIP, el histórico protegido, la limpieza de tablas operativas y el arrastre de la tabla anual.\n\nNo se borrará ningún dato. ¿Continuar?`)) return;
+  const btn=document.getElementById('finalArchiveAuditBtn');
+  const old=btn?.textContent;
+  if(btn){btn.disabled=true;btn.textContent='Auditando…';}
+  try{
+    const result=await apiPost({action:'runFinalArchiveAudit',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok){ alert(result?.error||'La auditoría final no pudo completarse.'); if(result?.report) renderFinalArchiveAudit_({audited:true,status:'failed',auditedAt:new Date().toISOString(),report:result.report}); return; }
+    renderFinalArchiveAudit_(result);
+    if(result.status==='passed') alert('✅ Auditoría F6 aprobada. Esta Polla quedó compactada, respaldada y protegida correctamente.');
+    else alert('⚠️ La auditoría terminó, pero detectó comprobaciones pendientes. Revisa el detalle antes de cerrar el Paquete F.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||'🧾 Ejecutar auditoría final';}
+  }
+}
+
 async function createSecurePollaBackup_(){
   if(secureBackupBusy_ || !currentPolla) return;
   if(currentPolla.status!=='finalizada' || !currentPolla.isArchived){
@@ -6387,7 +6445,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F5';
+const APP_VERSION = 'V25F6';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
