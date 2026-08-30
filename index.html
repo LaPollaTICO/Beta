@@ -2276,8 +2276,12 @@ async function enterPolla(pollaId, restoreFromUrl=false){
     history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
   }
 
+  // Mientras aún no conocemos los partidos no mostramos una pestaña activa ficticia.
+  // Evita el flash visual "Por jugar" -> "Resueltos" al entrar a una Polla
+  // que ya no tiene nada pendiente.
   matchesView_ = currentPolla.status === 'finalizada' ? 'resolved' : 'upcoming';
-  updateMatchesViewTabs_();
+  const matchesTabsBeforeLoad_ = document.getElementById('matchesViewTabs');
+  if(matchesTabsBeforeLoad_) matchesTabsBeforeLoad_.style.visibility = 'hidden';
 
   predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:currentPolla?.id||null,data:null,at:0}; selectedBulkMatches.clear();
   document.getElementById('landingScreen').classList.add('hidden');
@@ -2926,6 +2930,8 @@ async function loadMatches(){
     if(!Array.isArray(matchesResult)) throw new Error(matchesResult?.error || 'Respuesta inválida del servidor');
   }catch(err){
     matchesLoadFailed_ = true;
+    const matchesTabsError_ = document.getElementById('matchesViewTabs');
+    if(matchesTabsError_) matchesTabsError_.style.visibility = '';
     box.innerHTML = `
       <div class="empty">
         <div class="ball">📡</div>
@@ -2963,6 +2969,8 @@ async function loadMatches(){
   // ya tiene 0 partidos por jugar entra directamente a Resueltos sin mostrar
   // primero por un instante la pestaña vacía de Por jugar.
   chooseNaturalMatchesView_();
+  const matchesTabsReady_ = document.getElementById('matchesViewTabs');
+  if(matchesTabsReady_) matchesTabsReady_.style.visibility = '';
 
   const visibleIds=matches
     .filter(m=>!collapsedDateGroups.has(dateGroupKey(m.closeAt)) && !m.isCanceled && !m.resultSubmitted)
@@ -4897,7 +4905,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25A2';
+const APP_VERSION = 'V25A3';
 const LAST_APPLIED_SW_KEY_ = 'tico:lastAppliedServiceWorkerVersion';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
