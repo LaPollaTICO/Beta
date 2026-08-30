@@ -1353,6 +1353,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
   </div>
 </div>
 
+<script src="./app-core.js?v=V25G2"></script>
 <script>
 // ============ BACKEND SUPABASE ============
 // El navegador SOLO llama a la Edge Function con la anon key pública.
@@ -2890,23 +2891,33 @@ window.addEventListener('popstate', (event) => {
   }
 });
 
-function isHistoricalReadOnlyPolla_(){
-  return !!currentPolla && (currentPolla.status === 'finalizada' || currentPolla.isArchived === true || currentPolla.is_archived === true);
+function pollaLifecycle_(p=currentPolla){
+  if(window.TicoCore?.classifyPolla) return window.TicoCore.classifyPolla(p);
+  const compacted=!!(p?.compactedAt||p?.compacted_at);
+  const finished=String(p?.status||'').toLowerCase()==='finalizada'||p?.isArchived===true||p?.is_archived===true;
+  return compacted?{key:'COMPACTED'}:(finished?{key:'FINAL_REVIEW'}:{key:'ACTIVE'});
 }
+function isHistoricalReadOnlyPolla_(){ return pollaLifecycle_().key==='COMPACTED'; }
+function isFinalReviewPolla_(){ return pollaLifecycle_().key==='FINAL_REVIEW'; }
 function applyHistoricalReadOnlyUI_(){
-  const historical=isHistoricalReadOnlyPolla_();
+  const lifecycle=pollaLifecycle_();
+  const compacted=lifecycle.key==='COMPACTED';
+  const finalReview=lifecycle.key==='FINAL_REVIEW';
   const nameCard=document.querySelector('#appScreen .name-card');
   const statusRow=document.querySelector('#appScreen .status-row');
   const subtitle=document.querySelector('#appScreen header .subtitle');
-  nameCard?.classList.toggle('hidden',historical);
-  statusRow?.classList.toggle('hidden',historical);
-  document.getElementById('payPendingBanner')?.classList.toggle('hidden',historical || document.getElementById('payPendingBanner')?.classList.contains('hidden'));
+  // Solo la compactación retira definitivamente el acceso de jugador.
+  nameCard?.classList.toggle('hidden',compacted);
+  statusRow?.classList.toggle('hidden',compacted);
+  document.getElementById('payPendingBanner')?.classList.toggle('hidden',compacted || document.getElementById('payPendingBanner')?.classList.contains('hidden'));
   document.getElementById('pinLockedBox')?.classList.add('hidden');
-  if(historical){
+  if(compacted){
     document.getElementById('playerControlsRow')?.classList.add('hidden');
     document.getElementById('predictionProgress')?.classList.remove('show');
     document.getElementById('bulkBar')?.classList.add('hidden');
-    if(subtitle) subtitle.textContent='Histórico de resultados · solo lectura';
+    if(subtitle) subtitle.textContent='Histórico protegido · solo lectura';
+  }else if(finalReview){
+    if(subtitle) subtitle.textContent='Polla finalizada · ingresa para revisar tus resultados';
   }else if(subtitle){
     subtitle.textContent='Marca el resultado antes de que cierre el partido';
   }
@@ -2925,6 +2936,17 @@ async function enterPolla(pollaId, restoreFromUrl=false){
     if(fetched && fetched.id){
       currentPolla = fetched;
       if(!allPollas.some(p => String(p.id) === String(fetched.id))) allPollas.push(fetched);
+    }
+  }
+  // G2: las listas antiguas/RPC pueden no traer compactedAt. Para una Polla
+  // finalizada hacemos una lectura mínima del resumen antes de decidir si aún
+  // permite login de participantes o ya es histórico compacto puro.
+  if(currentPolla && String(currentPolla.status||'').toLowerCase()==='finalizada' && currentPolla.compactedAt == null){
+    const freshLifecycle = await apiGet('getPollaSummary', {pollaId}).catch(()=>null);
+    if(freshLifecycle?.id){
+      currentPolla = {...currentPolla, ...freshLifecycle};
+      const idx=allPollas.findIndex(p=>String(p.id)===String(currentPolla.id));
+      if(idx>=0) allPollas[idx]=currentPolla;
     }
   }
   if(!currentPolla){
@@ -3234,7 +3256,10 @@ async function checkName(){
   statusEl.textContent='Verificando...'; statusEl.className='name-status';
   try{
     const result=await apiPost({action:'checkName',pollaId:currentPolla.id,name});
-    if(!result.ok){ statusEl.textContent=result.error||'No se pudo verificar.'; statusEl.className='name-status err'; return; }
+    if(!result.ok){
+      if(result.error==='POLLA_COMPACTADA'){ statusEl.textContent='Esta Polla ya está compactada y se consulta sin iniciar sesión.'; statusEl.className='name-status err'; return; }
+      statusEl.textContent=result.error||'No se pudo verificar.'; statusEl.className='name-status err'; return;
+    }
     pendingAccessName=result.realName||name; pendingAccessState=result;
     document.getElementById('playerAccessTitle').textContent=`Hola, ${pendingAccessName}`;
     if(result.state==='EXISTING'){
@@ -3248,7 +3273,7 @@ async function checkName(){
     }else{
       if(result.canRegister===false){
         statusEl.textContent='';
-        const messages={INSCRIPCIONES_CERRADAS:'Las inscripciones para esta Polla ya cerraron.',NOT_QUALIFIED:'Esta Polla Gratuita es exclusiva para quienes están clasificados hoy en la Tabla Acumulada.'};
+        const messages={INSCRIPCIONES_CERRADAS:'Las inscripciones para esta Polla ya cerraron.',POLLA_FINALIZADA:'Esta Polla ya finalizó. Solo pueden ingresar quienes ya participaron para revisar sus resultados.',NOT_QUALIFIED:'Esta Polla Gratuita es exclusiva para quienes están clasificados hoy en la Tabla Acumulada.'};
         alert(messages[result.reason]||result.reason||'No puedes registrarte en esta Polla.'); return;
       }
       document.getElementById('playerAccessIcon').textContent='📝';
@@ -3279,7 +3304,8 @@ async function submitExistingLogin(){
     if(result.error==='NEEDS_ACTIVATION'){ showAccessMode('ACTIVATE'); accessError('Esta cuenta necesita un código de activación.'); return; }
     if(result.error==='NOT_QUALIFIED'){accessError('No estás clasificado actualmente para esta Polla Gratuita.');return;}
     if(result.error==='INSCRIPCIONES_CERRADAS'){accessError('Las inscripciones cerraron y todavía no estabas inscrito en esta Polla.');return;}
-    if(result.error==='POLLA_FINALIZADA'){accessError('Esta Polla ya finalizó. Su contenido es solo de consulta.');return;}
+    if(result.error==='POLLA_FINALIZADA'){accessError('Esta Polla ya finalizó y este jugador no participó en ella.');return;}
+    if(result.error==='POLLA_COMPACTADA'){accessError('Esta Polla ya está compactada y se consulta como histórico protegido.');return;}
     accessError(result.error||'No se pudo ingresar.'); return;
   }
   closeOverlay('playerAccessOverlay');
@@ -6548,7 +6574,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25G1.1';
+const APP_VERSION = 'V25G2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
