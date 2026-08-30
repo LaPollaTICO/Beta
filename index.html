@@ -367,6 +367,14 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .system-health-recent-item{font-size:11px;color:#56645e;padding:7px 0;border-top:1px solid rgba(23,87,52,.08);line-height:1.35;}
 .system-health-recent-item:first-of-type{border-top:0;padding-top:0;}
 .system-health-recent-empty{font-size:11px;color:#747d78;font-weight:650;}
+.system-health-ops{margin:10px 0;border-radius:14px;padding:12px 13px;border:1px solid rgba(23,87,52,.12);background:rgba(255,255,255,.74);}
+.system-health-ops.good{border-color:rgba(46,160,90,.30);background:rgba(239,251,244,.76);}
+.system-health-ops.warn{border-color:rgba(210,153,22,.38);background:rgba(255,248,222,.78);}
+.system-health-ops.bad{border-color:rgba(198,77,55,.34);background:rgba(255,239,235,.76);}
+.system-health-ops-title{font-size:13px;font-weight:900;color:#1e4034;text-align:center;}
+.system-health-ops-sub{font-size:11px;color:#66726c;font-weight:650;text-align:center;margin-top:4px;line-height:1.4;}
+.system-health-alerts{display:flex;flex-direction:column;gap:7px;margin-top:10px;}
+.system-health-alert{font-size:11px;line-height:1.4;border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.72);border:1px solid rgba(23,87,52,.09);color:#40534a;}
 @media(max-width:520px){.system-health-grid{grid-template-columns:1fr 1fr;}}
 
 .admin-session-mini{text-align:center;font-size:11px;color:#68776f;margin:0 0 10px;}
@@ -908,6 +916,10 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       <div class="system-health-hero">
         <div class="system-health-state" id="systemHealthState">Estado del sistema</div>
         <div class="system-health-sub" id="systemHealthChecked">Pulsa revisar para comprobar versiones y conexión.</div>
+      </div>
+      <div class="system-health-ops" id="systemHealthOperational">
+        <div class="system-health-ops-title">Resumen operativo</div>
+        <div class="system-health-ops-sub">Aún no hay una revisión reciente.</div>
       </div>
       <div class="system-health-grid" id="systemHealthVersions"></div>
       <div class="system-health-grid" id="systemHealthLatency"></div>
@@ -4840,6 +4852,40 @@ function renderRecentHealth_(){
   box.innerHTML=`<div class="system-health-recent-title">Historial reciente</div>${perf}${issues}`;
 }
 
+function renderOperationalHealth_(ctx={}){
+  const box=document.getElementById('systemHealthOperational');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const alerts=[];
+  let level='good';
+
+  if(ctx.checked){
+    if(!ctx.frontOk) alerts.push('Frontend y backend no coinciden. Revisa que index.html y la Edge Function sean de la misma versión.');
+    if(!ctx.swOk) alerts.push('El Service Worker está desactualizado. Espera el aviso de actualización o recarga la app.');
+    if(!ctx.dbOk) alerts.push('La base de datos no coincide o no respondió. Revisa el SQL de esta versión.');
+  }
+  if(apiMed>3000) alerts.push(`La API está muy lenta de forma sostenida (mediana ${apiMed} ms). Repite la prueba con buena conexión.`);
+  else if(apiMed>1500) alerts.push(`La API está algo lenta (mediana ${apiMed} ms), aunque la app puede seguir operando.`);
+  if(dbMed>1800) alerts.push(`La base está muy lenta (mediana ${dbMed} ms). Conviene revisar Supabase si persiste.`);
+  else if(dbMed>800) alerts.push(`La base está algo lenta (mediana ${dbMed} ms).`);
+  if(recentTechnicalIssues_.length>=2) alerts.push(`Hubo ${recentTechnicalIssues_.length} fallos técnicos recientes en esta sesión. Usa sus códigos TICO si necesitas investigarlos.`);
+  else if(recentTechnicalIssues_.length===1) alerts.push('Hubo 1 fallo técnico reciente en esta sesión. Si no se repite, puede haber sido puntual.');
+
+  const hardProblem = ctx.checked && (!ctx.frontOk || !ctx.swOk || !ctx.dbOk);
+  if(hardProblem || dbMed>1800 || recentTechnicalIssues_.length>=3) level='bad';
+  else if(alerts.length) level='warn';
+
+  let title='✅ Operación normal';
+  let sub='Versiones, conexión y rendimiento se ven estables.';
+  if(level==='warn'){ title='⚠️ Atención recomendada'; sub='La app puede seguir funcionando, pero hay algo que conviene vigilar.'; }
+  if(level==='bad'){ title='⛔ Revisión necesaria'; sub='Hay una condición que merece atención antes de dar el sistema por saludable.'; }
+
+  box.className=`system-health-ops ${level}`;
+  box.innerHTML=`<div class="system-health-ops-title">${title}</div><div class="system-health-ops-sub">${sub}</div>${alerts.length?`<div class="system-health-alerts">${alerts.slice(0,4).map(x=>`<div class="system-health-alert">${escapeHtml(x)}</div>`).join('')}</div>`:''}`;
+}
+
 async function refreshSystemHealth_(){
   if(systemHealthBusy_) return;
   const state=document.getElementById('systemHealthState');
@@ -4848,6 +4894,7 @@ async function refreshSystemHealth_(){
   const latency=document.getElementById('systemHealthLatency');
   if(!state || !checked || !versions || !latency) return;
   renderRecentHealth_();
+  renderOperationalHealth_();
   systemHealthBusy_=true;
   state.textContent='Revisando…';
   checked.textContent='Comprobando frontend, Service Worker, backend y base de datos.';
@@ -4868,6 +4915,7 @@ async function refreshSystemHealth_(){
       checked.textContent=result?.error || 'No se pudo comprobar el sistema.';
       versions.innerHTML=healthCard_('Frontend',APP_VERSION,'Versión cargada',true)+healthCard_('Service Worker',swVersion,'Controlador actual',false);
       latency.innerHTML=healthCard_('Respuesta API',`${edgeMs} ms`,'Tiempo desde este dispositivo',false);
+      renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
       return;
     }
 
@@ -4899,10 +4947,12 @@ async function refreshSystemHealth_(){
       healthCard_('Última petición',lastApiRequestId_ || '—','Código de diagnóstico',true)+
       healthCard_('Último error',lastTechnicalIssue_?.requestId || 'Ninguno',lastTechnicalIssue_ ? 'Referencia para soporte' : 'Sin errores técnicos en esta sesión',!lastTechnicalIssue_);
     renderRecentHealth_();
+    renderOperationalHealth_({checked:true,frontOk,swOk,dbOk});
   }catch(err){
     state.textContent='⚠️ Sin respuesta';
     checked.textContent='No se pudo completar la revisión.';
     renderRecentHealth_();
+    renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
   }finally{
     systemHealthBusy_=false;
   }
@@ -5916,7 +5966,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25E3';
+const APP_VERSION = 'V25E4';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
