@@ -118,6 +118,15 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .status-row{display:flex; align-items:center; justify-content:center; gap:8px; margin:6px 0 12px; flex-wrap:wrap;}
 .pin-locked-box{background:rgba(214,69,69,0.12); border:1px solid var(--red-card); border-radius:12px; padding:12px 14px; text-align:center; font-size:12.5px; color:var(--chalk); margin-bottom:18px;}
 .pay-pending-banner{background:rgba(242,193,78,0.15); border:1px solid var(--floodlight); border-radius:12px; padding:10px 14px; text-align:center; font-size:12.5px; font-weight:700; color:var(--floodlight); margin-bottom:14px;}
+.app-mode-banner{position:sticky;top:0;z-index:90;margin:0 auto 10px;max-width:600px;padding:9px 14px;border-radius:0 0 12px 12px;background:#7a2f2f;color:#fff;font-size:12.5px;font-weight:800;text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.24);}
+.app-mode-banner.warn{background:#72520d;color:#fff7db;}
+.admin-control-box{background:#f7f4e9;border:1px solid #ddd6bd;border-radius:12px;padding:12px;margin:10px 0 6px;color:#18231f;}
+.admin-control-box h3{margin:0 0 8px;font-size:15px;color:#17382c;}
+.admin-control-toggle{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid rgba(23,56,44,.1);font-size:13px;font-weight:750;}
+.admin-control-toggle:last-of-type{border-bottom:0;}
+.admin-control-toggle input{width:18px;height:18px;accent-color:#17382c;}
+.admin-control-box textarea{min-height:62px;margin-top:7px;background:#fff;color:#111;}
+.admin-control-status{font-size:11.5px;font-weight:800;margin:6px 0 2px;color:#6a5a1c;}
 .player-controls-row{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 16px;}
 .player-controls-row .bulk-toggle-row{margin:0;}
 .player-settings-btn{width:38px;height:38px;flex:0 0 38px;border-radius:50%;border:1px solid rgba(242,193,78,.55);background:rgba(242,193,78,.10);color:var(--floodlight);font-size:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
@@ -463,6 +472,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 
 <div id="globalLoader" class="global-loader hidden"><span class="global-loader-dot"></span>Cargando...</div>
 <div id="connectionBar" class="connection-bar hidden">📡 Sin conexión</div>
+<div id="appModeBanner" class="app-mode-banner hidden"></div>
 
 <!-- ======= PANTALLA PRINCIPAL ======= -->
 <div id="landingScreen" class="wrap">
@@ -803,6 +813,16 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <div class="admin-pane active" id="tabResumen">
       <div class="admin-session-mini" id="adminSessionMini"></div>
       <div class="admin-overview-grid" id="adminOverviewGrid"></div>
+      <div class="admin-control-box">
+        <h3>Control operativo</h3>
+        <label class="admin-control-toggle"><input id="cfgMaintenance" type="checkbox"> Modo mantenimiento · jugadores en solo lectura</label>
+        <label class="admin-control-toggle"><input id="cfgPredictions" type="checkbox"> Pronósticos habilitados</label>
+        <label class="admin-control-toggle"><input id="cfgRegistrations" type="checkbox"> Inscripciones habilitadas</label>
+        <label style="margin-top:8px;display:block;">Mensaje de mantenimiento</label>
+        <textarea id="cfgMaintenanceMessage" maxlength="180" placeholder="Ej. Estamos haciendo una mejora rápida. Vuelve en unos minutos."></textarea>
+        <div class="admin-control-status" id="cfgStatusText"></div>
+        <button class="btn-secondary" onclick="saveAppConfig_()">Guardar control operativo</button>
+      </div>
       <h3 style="margin-top:8px;">Chequeo rápido</h3>
       <div class="admin-health-list" id="adminHealthList"></div>
       <p class="hint" style="margin-top:10px;">Este resumen es informativo y no bloquea ninguna acción.</p>
@@ -1243,6 +1263,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
+let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true};
 let myReferralCode = null;
 let countdownTimer = null;
 let landingTimer = null;
@@ -1685,6 +1706,7 @@ function getSortedMatches(){
 
 /* ============ CASILLAS DE MARCADOR Y ENVÍO MASIVO ============ */
 function toggleBulkMode(){
+  if(document.getElementById('bulkModeCheckbox')?.checked && playerActionBlocked_('prediction')){ document.getElementById('bulkModeCheckbox').checked=false; bulkMode=false; return; }
   bulkMode = document.getElementById('bulkModeCheckbox').checked;
   if(bulkMode){
     // No seleccionamos a escondidas partidos de jornadas retraídas. Al entrar,
@@ -1735,6 +1757,7 @@ function updateBulkBar(){
 }
 
 async function sendAllPredictions(){
+  if(playerActionBlocked_('prediction')) return;
   if(!authedName || !authedPin) return;
   const selectedMatches = getSortedMatches().filter(m => !m.resultSubmitted && !m.isCanceled && !isClosed(m.closeAt) && selectedBulkMatches.has(m.id));
   if(selectedMatches.length === 0){
@@ -2341,8 +2364,83 @@ function openInviteWhatsappFallback_(){
   window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
 }
 
+function applyAppConfig_(cfg){
+  if(!cfg || typeof cfg !== 'object') return;
+  appConfig_ = {
+    maintenanceEnabled: !!cfg.maintenanceEnabled,
+    maintenanceMessage: String(cfg.maintenanceMessage || ''),
+    predictionsEnabled: cfg.predictionsEnabled !== false,
+    registrationsEnabled: cfg.registrationsEnabled !== false
+  };
+  renderAppModeBanner_();
+  renderAdminConfig_();
+}
+async function refreshAppConfig_(silent=true){
+  try{
+    const cfg = silent ? await apiGetSilent('getAppConfig') : await apiGet('getAppConfig');
+    if(cfg?.ok !== false) applyAppConfig_(cfg);
+  }catch(_){ }
+}
+function renderAppModeBanner_(){
+  const bar = document.getElementById('appModeBanner');
+  if(!bar) return;
+  let text=''; let warn=false;
+  if(appConfig_.maintenanceEnabled){
+    text = '🛠️ ' + (appConfig_.maintenanceMessage || 'Mantenimiento temporal: la app está en modo solo lectura.');
+  } else if(!appConfig_.predictionsEnabled){
+    text = '⏸️ Pronósticos pausados temporalmente por el administrador.'; warn=true;
+  } else if(!appConfig_.registrationsEnabled){
+    text = '⏸️ Inscripciones pausadas temporalmente.'; warn=true;
+  }
+  bar.textContent = text;
+  bar.classList.toggle('warn', warn);
+  bar.classList.toggle('hidden', !text);
+}
+function renderAdminConfig_(){
+  const maintenance=document.getElementById('cfgMaintenance');
+  const predictions=document.getElementById('cfgPredictions');
+  const registrations=document.getElementById('cfgRegistrations');
+  const message=document.getElementById('cfgMaintenanceMessage');
+  const status=document.getElementById('cfgStatusText');
+  if(!maintenance || !predictions || !registrations || !message) return;
+  maintenance.checked=!!appConfig_.maintenanceEnabled;
+  predictions.checked=!!appConfig_.predictionsEnabled;
+  registrations.checked=!!appConfig_.registrationsEnabled;
+  message.value=appConfig_.maintenanceMessage || '';
+  if(status) status.textContent = appConfig_.maintenanceEnabled ? '🔒 Jugadores en solo lectura' : (!appConfig_.predictionsEnabled ? '⏸️ Pronósticos pausados' : (!appConfig_.registrationsEnabled ? '⏸️ Inscripciones pausadas' : '✅ Operación normal'));
+}
+function playerActionBlocked_(kind='prediction'){
+  if(appConfig_.maintenanceEnabled){
+    alert(appConfig_.maintenanceMessage || 'La app está temporalmente en modo solo lectura.');
+    return true;
+  }
+  if(kind==='prediction' && !appConfig_.predictionsEnabled){
+    alert('Los pronósticos están pausados temporalmente.');
+    return true;
+  }
+  if(kind==='registration' && !appConfig_.registrationsEnabled){
+    alert('Las inscripciones están pausadas temporalmente.');
+    return true;
+  }
+  return false;
+}
+
+async function saveAppConfig_(){
+  if(!hasValidAdminSession_()){ alert('Tu sesión Admin venció. Vuelve a entrar.'); return; }
+  const maintenance=!!document.getElementById('cfgMaintenance')?.checked;
+  const predictions=!!document.getElementById('cfgPredictions')?.checked;
+  const registrations=!!document.getElementById('cfgRegistrations')?.checked;
+  const maintenanceMessage=String(document.getElementById('cfgMaintenanceMessage')?.value || '').trim();
+  if((maintenance || !predictions) && !confirm('Este cambio limitará acciones de los jugadores. ¿Guardar el control operativo?')) return;
+  const result=await apiPost({action:'setAppConfig', maintenanceEnabled:maintenance, maintenanceMessage, predictionsEnabled:predictions, registrationsEnabled:registrations, adminName});
+  if(!result?.ok){ alert(result?.error || 'No se pudo guardar el control operativo.'); return; }
+  applyAppConfig_(result.config || {maintenanceEnabled:maintenance,maintenanceMessage,predictionsEnabled:predictions,registrationsEnabled:registrations});
+  showToast_('✅ Control operativo actualizado');
+}
+
 /* ============ LANDING ============ */
 async function initLanding(){
+  void refreshAppConfig_(true);
   const container = document.getElementById('pollasContainer');
   container.innerHTML = '<div class="loading-msg">Cargando...</div>';
   try{
@@ -2845,6 +2943,7 @@ async function submitActivation(){
 }
 
 async function submitNewRegistration(){
+  if(playerActionBlocked_('registration')) return;
   const name=document.getElementById('registerNameInput').value.trim();
   const pin=document.getElementById('registerPinInput').value.trim();
   const ref=currentPolla?.isFreePolla?'':document.getElementById('registerReferralInput').value.trim().toUpperCase();
@@ -2876,6 +2975,7 @@ function openRecoveryMode(){
   showAccessMode('RECOVERY');
 }
 async function submitRecoveryFromModal(){
+  if(playerActionBlocked_('account')) return;
   const answer=document.getElementById('recoveryAnswerInput').value.trim(); const pin=document.getElementById('recoveryPinInput').value.trim();
   if(!answer){accessError('Escribe tu respuesta de seguridad.');return;} if(!/^\d{4}$/.test(pin)){accessError('El nuevo PIN debe tener 4 números.');return;}
   const result=await apiPost({action:'selfResetPin',name:pendingAccessName,securityAnswer:answer,newPin:pin});
@@ -3921,6 +4021,7 @@ function onScoreInput(matchId){
 }
 
 async function submitPrediction(matchId){
+  if(playerActionBlocked_('prediction')) return;
   if(!authedName){ alert('Confirma tu nombre primero.'); return; }
   const match = matches.find(m => m.id === matchId);
   if(isClosed(match.closeAt)){ alert('Este partido ya cerró.'); await loadMatches(); return; }
@@ -4373,6 +4474,7 @@ function renderAdminOverview_(){
   const health = document.getElementById('adminHealthList');
   const session = document.getElementById('adminSessionMini');
   if(!grid || !health || !currentPolla) return;
+  renderAdminConfig_();
 
   const parts = Array.isArray(participantsCache) ? participantsCache : [];
   const participantTotal = parts.length || Number(currentPolla.participantCount || 0);
@@ -5420,7 +5522,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D3';
+const APP_VERSION = 'V25D4';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
