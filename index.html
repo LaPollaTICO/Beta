@@ -512,7 +512,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
   .check-btn:hover, .submit-btn:not(:disabled):hover, .btn-primary:hover, .btn-secondary:hover, .btn-whatsapp:hover{filter:brightness(1.08); transition:filter 0.15s;}
 }
 
-.secure-backup-box{border:1px solid rgba(217,170,62,.38);background:rgba(217,170,62,.06);border-radius:16px;padding:16px;margin-top:6px}.secure-backup-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.secure-backup-head p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.45}.secure-backup-badge{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--muted)}.secure-backup-badge.ok{border-color:rgba(64,190,120,.45);color:#8fe0ad;background:rgba(64,190,120,.08)}.secure-backup-status{margin-top:14px;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);font-size:13px;line-height:1.45}.secure-backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.secure-backup-actions .btn-secondary{margin:0}.compaction-precheck{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(0,0,0,.14)}.compaction-precheck-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900}.compaction-checks{display:grid;gap:7px;margin-top:10px}.compaction-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35}.compaction-check .mark{width:18px;flex:0 0 18px;text-align:center}.compaction-check small{display:block;color:var(--muted);margin-top:1px}.compaction-ready{color:#8fe0ad}.compaction-blocked{color:#f4c96d}@media(max-width:520px){.secure-backup-head{flex-direction:column}.secure-backup-actions{grid-template-columns:1fr}}
+.secure-backup-box{border:1px solid rgba(217,170,62,.38);background:rgba(217,170,62,.06);border-radius:16px;padding:16px;margin-top:6px}.secure-backup-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.secure-backup-head p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.45}.secure-backup-badge{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--muted)}.secure-backup-badge.ok{border-color:rgba(64,190,120,.45);color:#8fe0ad;background:rgba(64,190,120,.08)}.secure-backup-status{margin-top:14px;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);font-size:13px;line-height:1.45}.secure-backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.secure-backup-actions .btn-secondary{margin:0}.compaction-precheck{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:12px;background:rgba(0,0,0,.14)}.compaction-precheck-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900}.compaction-checks{display:grid;gap:7px;margin-top:10px}.compaction-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35}.compaction-check .mark{width:18px;flex:0 0 18px;text-align:center}.compaction-check small{display:block;color:var(--muted);margin-top:1px}.compaction-ready{color:#111}.compaction-precheck .secure-backup-badge.ok{color:#111}.compaction-blocked{color:#f4c96d}@media(max-width:520px){.secure-backup-head{flex-direction:column}.secure-backup-actions{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1019,7 +1019,14 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
           <div id="compactionPrecheckStatus" class="hint" style="margin-top:8px;">Comprueba que el ZIP siga intacto y que la Polla no haya cambiado desde el último respaldo.</div>
           <div id="compactionPrecheckChecks" class="compaction-checks"></div>
           <button class="btn-secondary" id="compactionPrecheckBtn" style="margin-top:10px;" onclick="runCompactionPrecheck_()">🔎 Verificar antes de compactar</button>
-          <p class="hint" style="margin:8px 0 0;">F2 todavía no borra ni compacta datos. Solo habilita la validación previa.</p>
+          <p class="hint" style="margin:8px 0 0;">F3 todavía no borra datos. El pre-chequeo valida el respaldo y permite preparar un sello inmutable para la futura transacción.</p>
+        </div>
+        <div class="compaction-precheck" style="margin-top:10px;">
+          <div class="compaction-precheck-title"><span>Sello de compactación</span><span id="compactionSealBadge" class="secure-backup-badge">Sin preparar</span></div>
+          <div id="compactionSealStatus" class="hint" style="margin-top:8px;">Congela una copia verificable del estado aprobado antes de habilitar cualquier borrado futuro.</div>
+          <div id="compactionSealDetails" class="compaction-checks"></div>
+          <button class="btn-secondary" id="compactionSealBtn" style="margin-top:10px;" onclick="prepareCompactionSeal_()">🛡️ Preparar sello seguro</button>
+          <p class="hint" style="margin:8px 0 0;">Preparar el sello no elimina partidos, pronósticos, participantes ni imágenes.</p>
         </div>
         <p class="hint" style="margin-top:10px;">Solo se puede generar cuando la Polla está finalizada y archivada. El ZIP se guarda en Storage privado y además se descarga mediante un enlace temporal.</p>
       </div>
@@ -5672,6 +5679,7 @@ async function refreshSecureBackupStatus_(showErrors=false){
     const result=await apiPostSilent({action:'getSecurePollaBackupStatus',pollaId:currentPolla.id,adminName:adminName});
     if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el respaldo.');
     renderSecureBackupStatus_(result);
+    await refreshCompactionSealStatus_(false);
   }catch(e){
     if(box) box.textContent='No se pudo verificar el estado del respaldo.';
     if(showErrors) alert(e?.message||'No se pudo revisar el respaldo.');
@@ -5702,11 +5710,70 @@ async function runCompactionPrecheck_(){
     const result=await apiPost({action:'getCompactionPrecheck',pollaId:currentPolla.id,adminName:adminName});
     if(!result?.ok) throw new Error(result?.error||'No se pudo ejecutar el pre-chequeo.');
     renderCompactionPrecheck_(result);
-    if(result.ready) alert('✅ Pre-chequeo aprobado. El respaldo está íntegro y los datos no cambiaron desde que se generó.\n\nF2 todavía no elimina nada.');
+    if(result.ready) alert('✅ Pre-chequeo aprobado. El respaldo está íntegro y los datos no cambiaron desde que se generó.\n\nF3 todavía no elimina nada.');
   }catch(e){
     alert(e?.message||'No se pudo ejecutar el pre-chequeo.');
   }finally{
     if(btn){btn.disabled=false;btn.textContent=old||'🔎 Verificar antes de compactar';}
+  }
+}
+
+
+function renderCompactionSealStatus_(result){
+  const badge=document.getElementById('compactionSealBadge');
+  const status=document.getElementById('compactionSealStatus');
+  const details=document.getElementById('compactionSealDetails');
+  if(!badge||!status||!details) return;
+  if(!result?.hasSeal){
+    badge.textContent='Sin preparar';
+    badge.className='secure-backup-badge';
+    status.className='hint';
+    status.textContent='Aún no existe un sello de compactación preparado para el respaldo vigente.';
+    details.innerHTML='';
+    return;
+  }
+  const seal=result.seal||{};
+  badge.textContent='✓ Preparado';
+  badge.className='secure-backup-badge ok';
+  badge.style.color='#111';
+  status.className='compaction-ready';
+  status.textContent='Estado aprobado congelado en servidor. Todavía no se ha eliminado ningún dato.';
+  const counts=seal.counts||{};
+  details.innerHTML=[
+    ['Respaldo vinculado', String(seal.backupSha256||'').slice(0,16)+'…'],
+    ['Huella de datos', String(seal.snapshotSha256||'').slice(0,16)+'…'],
+    ['Participantes', Number(counts.participants)||0],
+    ['Partidos', Number(counts.matches)||0],
+    ['Pronósticos', Number(counts.predictions)||0],
+  ].map(([label,value])=>`<div class="compaction-check"><span class="mark">✅</span><span><b>${escapeHtml(String(label))}</b><small>${escapeHtml(String(value))}</small></span></div>`).join('');
+}
+
+async function refreshCompactionSealStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getCompactionSealStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el sello.');
+    renderCompactionSealStatus_(result);
+  }catch(e){
+    if(showErrors) alert(e?.message||'No se pudo revisar el sello de compactación.');
+  }
+}
+
+async function prepareCompactionSeal_(){
+  if(!currentPolla) return;
+  const btn=document.getElementById('compactionSealBtn');
+  const old=btn?.textContent;
+  if(!confirm('🛡️ Preparar sello de compactación\n\nEl servidor repetirá todas las verificaciones y guardará una copia inmutable del estado aprobado.\n\nNo se borrará ningún dato. ¿Continuar?')) return;
+  if(btn){btn.disabled=true;btn.textContent='Preparando sello…';}
+  try{
+    const result=await apiPost({action:'prepareCompactionSeal',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo preparar el sello.');
+    renderCompactionSealStatus_({ok:true,hasSeal:true,seal:result.seal});
+    alert('✅ Sello preparado. El estado aprobado quedó congelado en servidor.\n\nF3 no ha eliminado ningún dato.');
+  }catch(e){
+    alert(e?.message||'No se pudo preparar el sello de compactación.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||'🛡️ Preparar sello seguro';}
   }
 }
 
@@ -5739,7 +5806,7 @@ async function createSecurePollaBackup_(){
 Huella: ${shortHash || 'registrada'}
 Tamaño: ${bytesLabel_(result.receipt?.sizeBytes)}
 
-El pre-chequeo F2 ya está habilitado. La compactación todavía NO borra datos en esta versión.`);
+El pre-chequeo y el sello seguro F3 están habilitados. La compactación todavía NO borra datos en esta versión.`);
   }catch(e){
     alert(e?.message||'No se pudo generar el respaldo seguro. No se modificó ningún dato de la Polla.');
   }finally{
@@ -6168,7 +6235,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F2';
+const APP_VERSION = 'V25F3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
