@@ -396,6 +396,8 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .list-item .btn-row{display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; flex:0 0 auto; margin-left:auto;}
 .icon-btn{background:none; border:none; cursor:pointer; font-size:16px; padding:9px 10px; min-width:40px; min-height:40px; margin:2px 1px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; gap:4px; -webkit-tap-highlight-color:transparent; transition:background 0.12s ease; flex-shrink:0;}
 .icon-btn:active{background:rgba(16,32,43,0.08);}
+.manage-history-btn{border:1px solid rgba(16,32,43,.28); background:#fff; color:#10202b; border-radius:9px; padding:7px 11px; min-height:34px; font-size:12px; font-weight:800; cursor:pointer; white-space:nowrap;}
+.manage-history-btn:active{background:rgba(16,32,43,.07);}
 .result-row{display:flex; gap:8px; margin-top:10px; align-items:center;}
 .result-row input{width:60px; text-align:center;}
 .result-tag{font-size:12px; font-weight:700; padding:4px 8px; border-radius:6px; display:inline-block;}
@@ -2888,6 +2890,28 @@ window.addEventListener('popstate', (event) => {
   }
 });
 
+function isHistoricalReadOnlyPolla_(){
+  return !!currentPolla && (currentPolla.status === 'finalizada' || currentPolla.isArchived === true || currentPolla.is_archived === true);
+}
+function applyHistoricalReadOnlyUI_(){
+  const historical=isHistoricalReadOnlyPolla_();
+  const nameCard=document.querySelector('#appScreen .name-card');
+  const statusRow=document.querySelector('#appScreen .status-row');
+  const subtitle=document.querySelector('#appScreen header .subtitle');
+  nameCard?.classList.toggle('hidden',historical);
+  statusRow?.classList.toggle('hidden',historical);
+  document.getElementById('payPendingBanner')?.classList.toggle('hidden',historical || document.getElementById('payPendingBanner')?.classList.contains('hidden'));
+  document.getElementById('pinLockedBox')?.classList.add('hidden');
+  if(historical){
+    document.getElementById('playerControlsRow')?.classList.add('hidden');
+    document.getElementById('predictionProgress')?.classList.remove('show');
+    document.getElementById('bulkBar')?.classList.add('hidden');
+    if(subtitle) subtitle.textContent='Histórico de resultados · solo lectura';
+  }else if(subtitle){
+    subtitle.textContent='Marca el resultado antes de que cierre el partido';
+  }
+}
+
 async function enterPolla(pollaId, restoreFromUrl=false){
   if(landingTimer){ clearInterval(landingTimer); landingTimer = null; }
   // C3: ocultamos de inmediato cualquier progreso pintado por la Polla/sesión
@@ -2957,8 +2981,9 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   //    Si el admin lo desactiva antes de finalizar, el botón se vuelve a
   //    ocultar (a menos que la Polla ya esté finalizada).
   updateWinnersButtonVisibility();
-  document.getElementById('playerName').value = lastPlayerName_();
+  document.getElementById('playerName').value = isHistoricalReadOnlyPolla_() ? '' : lastPlayerName_();
   resetAuthUI();
+  applyHistoricalReadOnlyUI_();
   await loadMatches();
   if(countdownTimer) clearInterval(countdownTimer);
   countdownTimer = setInterval(updateCountdowns, 30000);
@@ -3199,6 +3224,7 @@ function showAccessMode(mode){
 function accessError(msg){ const el=document.getElementById('playerAccessError'); el.textContent=msg||''; }
 
 async function checkName(){
+  if(isHistoricalReadOnlyPolla_()){ showToast_('Esta Polla está finalizada. El histórico es solo de consulta.'); return; }
   if(busyFlags.checkName) return;
   const name=document.getElementById('playerName').value.trim();
   const statusEl=document.getElementById('nameStatus');
@@ -3253,6 +3279,7 @@ async function submitExistingLogin(){
     if(result.error==='NEEDS_ACTIVATION'){ showAccessMode('ACTIVATE'); accessError('Esta cuenta necesita un código de activación.'); return; }
     if(result.error==='NOT_QUALIFIED'){accessError('No estás clasificado actualmente para esta Polla Gratuita.');return;}
     if(result.error==='INSCRIPCIONES_CERRADAS'){accessError('Las inscripciones cerraron y todavía no estabas inscrito en esta Polla.');return;}
+    if(result.error==='POLLA_FINALIZADA'){accessError('Esta Polla ya finalizó. Su contenido es solo de consulta.');return;}
     accessError(result.error||'No se pudo ingresar.'); return;
   }
   closeOverlay('playerAccessOverlay');
@@ -5364,7 +5391,7 @@ function renderHistoricalPlayers_(){
   const box=document.getElementById('historicalPlayersList'); if(!box)return;
   const q=normalizeName(document.getElementById('historicalPlayerSearch')?.value||'');
   const rows=historicalPlayersCache_.filter(p=>!q||normalizeName(p.name).includes(q)).slice(0,100);
-  box.innerHTML=rows.length?rows.map(p=>`<div class="list-item"><div><b>${escapeHtml(p.name)}</b><small style="display:block;">Identidad global</small></div><button class="icon-btn" title="Revisar historial" onclick="openHistoricalPlayerDetail_('${jsAttr(p.id)}')">›</button></div>`).join(''):'<p class="hint">No hay coincidencias.</p>';
+  box.innerHTML=rows.length?rows.map(p=>`<div class="list-item" style="display:flex;align-items:center;justify-content:space-between;gap:12px;"><div><b>${escapeHtml(p.name)}</b><small style="display:block;">Identidad global</small></div><button class="manage-history-btn" title="Gestionar jugador" onclick="openHistoricalPlayerDetail_('${jsAttr(p.id)}')">Gestionar</button></div>`).join(''):'<p class="hint">No hay coincidencias.</p>';
 }
 async function openHistoricalPlayerDetail_(playerId){
   const body=document.getElementById('historicalPlayerDetailBody');
@@ -6521,7 +6548,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25G1';
+const APP_VERSION = 'V25G1.1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
