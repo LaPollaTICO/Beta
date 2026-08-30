@@ -511,6 +511,8 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
   .polla-card:hover{transform:translateY(-2px); box-shadow:0 16px 36px rgba(0,0,0,0.45);}
   .check-btn:hover, .submit-btn:not(:disabled):hover, .btn-primary:hover, .btn-secondary:hover, .btn-whatsapp:hover{filter:brightness(1.08); transition:filter 0.15s;}
 }
+
+.secure-backup-box{border:1px solid rgba(217,170,62,.38);background:rgba(217,170,62,.06);border-radius:16px;padding:16px;margin-top:6px}.secure-backup-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.secure-backup-head p{margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.45}.secure-backup-badge{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--muted)}.secure-backup-badge.ok{border-color:rgba(64,190,120,.45);color:#8fe0ad;background:rgba(64,190,120,.08)}.secure-backup-status{margin-top:14px;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);font-size:13px;line-height:1.45}.secure-backup-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.secure-backup-actions .btn-secondary{margin:0}@media(max-width:520px){.secure-backup-head{flex-direction:column}.secure-backup-actions{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -999,9 +1001,24 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
     </div>
 
     <div class="admin-pane" id="tabDatos">
-      <h3 style="margin-top:6px;">Respaldo completo</h3>
-      <p class="hint">Descarga todos los datos de esta Polla (partidos, pronósticos, participantes) en un solo archivo.</p>
-      <button class="btn-secondary" onclick="exportPollaBackup()">⬇️ Exportar respaldo completo (.json)</button>
+      <div class="secure-backup-box">
+        <div class="secure-backup-head">
+          <div>
+            <h3 style="margin:0;">Respaldo seguro</h3>
+            <p>Genera un ZIP privado con los datos de la Polla y las imágenes reales. Este será el respaldo obligatorio antes de cualquier compactación futura.</p>
+          </div>
+          <div class="secure-backup-badge" id="secureBackupBadge">Sin verificar</div>
+        </div>
+        <div id="secureBackupStatus" class="secure-backup-status">Revisa el estado para saber si ya existe un respaldo seguro.</div>
+        <div class="secure-backup-actions">
+          <button class="btn-secondary" id="secureBackupCreateBtn" onclick="createSecurePollaBackup_()">🛡️ Generar respaldo seguro (.zip)</button>
+          <button class="btn-secondary" onclick="refreshSecureBackupStatus_(true)">Revisar estado</button>
+        </div>
+        <p class="hint" style="margin-top:10px;">Solo se puede generar cuando la Polla está finalizada y archivada. El ZIP se guarda en Storage privado y además se descarga mediante un enlace temporal.</p>
+      </div>
+      <h3 style="margin-top:18px;">Respaldo JSON manual</h3>
+      <p class="hint">Exportación adicional de datos en JSON. No sustituye al respaldo seguro porque no contiene los archivos de imagen.</p>
+      <button class="btn-secondary" onclick="exportPollaBackup()">⬇️ Exportar respaldo (.json)</button>
       <h3>Respaldo global (identidades e historial)</h3>
       <p class="hint">Descarga las hojas que viven para siempre y nunca se borran: identidades de jugadores (nombre, PIN, pregunta de seguridad), historial de campeones y el arrastre de puntos entre años. Si el Sheet se corrompe o alguien borra algo por error, esto es lo que te permite reconstruirlo.</p>
       <button class="btn-secondary" onclick="exportGlobalBackup()">⬇️ Exportar respaldo global (.json)</button>
@@ -4784,6 +4801,7 @@ function switchAdminTab(tabId){
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
   if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
   if(tabId === 'tabSalud') refreshSystemHealth_();
+  if(tabId === 'tabDatos') refreshSecureBackupStatus_(false);
 }
 
 function renderAdminOverview_(){
@@ -5613,6 +5631,83 @@ async function finalizePolla(){
   updateWinnersButtonVisibility();
   closeOverlay('adminOverlay');
 }
+let secureBackupBusy_ = false;
+
+function bytesLabel_(bytes){
+  const n=Number(bytes)||0;
+  if(n < 1024) return `${n} B`;
+  if(n < 1024*1024) return `${(n/1024).toFixed(1)} KB`;
+  return `${(n/(1024*1024)).toFixed(1)} MB`;
+}
+
+function renderSecureBackupStatus_(result){
+  const badge=document.getElementById('secureBackupBadge');
+  const box=document.getElementById('secureBackupStatus');
+  if(!badge || !box) return;
+  if(!result?.hasBackup){
+    badge.textContent='Sin respaldo';
+    badge.className='secure-backup-badge';
+    box.innerHTML='Todavía no hay un respaldo seguro verificado para esta Polla.';
+    return;
+  }
+  const r=result.receipt||{};
+  const when=r.created_at ? fmtDate(r.created_at) : 'fecha no disponible';
+  badge.textContent='✓ Verificado';
+  badge.className='secure-backup-badge ok';
+  box.innerHTML=`<b>Último respaldo:</b> ${escapeHtml(when)}<br><span class="hint">${Number(r.participant_count)||0} participantes · ${Number(r.match_count)||0} partidos · ${Number(r.prediction_count)||0} pronósticos · ${Number(r.image_count)||0} imágenes · ${escapeHtml(bytesLabel_(r.size_bytes))}</span><br><span class="hint">SHA-256: ${escapeHtml(String(r.sha256||'').slice(0,20))}…</span>`;
+}
+
+async function refreshSecureBackupStatus_(showErrors=false){
+  if(!currentPolla) return;
+  const box=document.getElementById('secureBackupStatus');
+  if(box) box.textContent='Revisando respaldo…';
+  try{
+    const result=await apiPostSilent({action:'getSecurePollaBackupStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el respaldo.');
+    renderSecureBackupStatus_(result);
+  }catch(e){
+    if(box) box.textContent='No se pudo verificar el estado del respaldo.';
+    if(showErrors) alert(e?.message||'No se pudo revisar el respaldo.');
+  }
+}
+
+async function createSecurePollaBackup_(){
+  if(secureBackupBusy_ || !currentPolla) return;
+  if(currentPolla.status!=='finalizada' || !currentPolla.isArchived){
+    alert('🛡️ El respaldo seguro se habilita cuando la Polla está finalizada y archivada.');
+    return;
+  }
+  if(!confirm(`🛡️ Generar respaldo seguro\n\nSe creará un ZIP privado con datos + imágenes reales y se registrará una huella SHA-256 en el servidor.\n\n¿Continuar?`)) return;
+  secureBackupBusy_=true;
+  const btn=document.getElementById('secureBackupCreateBtn');
+  const old=btn?.textContent;
+  if(btn){ btn.disabled=true; btn.textContent='Generando respaldo…'; }
+  try{
+    const result=await apiPost({action:'createSecurePollaBackup',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo generar el respaldo seguro.');
+    if(result.signedUrl){
+      const a=document.createElement('a');
+      a.href=result.signedUrl;
+      a.download=`LaPollaTICO_Polla_${currentPolla.number}_respaldo_seguro.zip`;
+      a.rel='noopener';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    await refreshSecureBackupStatus_(false);
+    const shortHash=String(result.receipt?.sha256||'').slice(0,12);
+    alert(`✅ Respaldo seguro verificado.
+
+Huella: ${shortHash || 'registrada'}
+Tamaño: ${bytesLabel_(result.receipt?.sizeBytes)}
+
+La compactación todavía NO está habilitada en esta versión.`);
+  }catch(e){
+    alert(e?.message||'No se pudo generar el respaldo seguro. No se modificó ningún dato de la Polla.');
+  }finally{
+    secureBackupBusy_=false;
+    if(btn){ btn.disabled=false; btn.textContent=old||'🛡️ Generar respaldo seguro (.zip)'; }
+  }
+}
+
 async function exportPollaBackup(){
   const backup=await apiPost({action:'getPollaBackup',pollaId:currentPolla.id,pin:adminPin,adminName:adminName}).catch(()=>null);
   if(!backup?.ok){alert(backup?.error||'No se pudo generar el respaldo de esta Polla.');return;}
@@ -6033,7 +6128,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25E5';
+const APP_VERSION = 'V25F1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;

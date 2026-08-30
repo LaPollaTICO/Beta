@@ -33,7 +33,7 @@ self.addEventListener('install', (event) => {
   // V25B1.1: NO skipWaiting automático. Esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25E5';
+const SW_VERSION = 'V25F1';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){
