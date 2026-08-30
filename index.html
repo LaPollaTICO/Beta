@@ -1517,7 +1517,7 @@ function apiGetSilent(action, params={}){
 async function apiPost(params, retriesLeft=2, silent=false){
   const action = String(params?.action || '');
   const mutationActions = new Set([
-    'savePrediction','setParticipantPaid','addParticipants','addMatch','editMatch',
+    'savePrediction','savePredictionsBulk','setParticipantPaid','addParticipants','addMatch','editMatch',
     'submitResult','cancelAndReplaceMatch','addPolla','editPolla','deletePolla',
     'archivePolla','desarchivarPolla','closeSeason','clearSeasonData',
     'setSecurityAnswer','updateMyWhatsapp','resetPin','renameParticipant',
@@ -1659,45 +1659,83 @@ function updateBulkBar(){
 }
 
 async function sendAllPredictions(){
-  if(!authedName) return;
+  if(!authedName || !authedPin) return;
   const selectedMatches = getSortedMatches().filter(m => !m.resultSubmitted && !m.isCanceled && !isClosed(m.closeAt) && selectedBulkMatches.has(m.id));
   if(selectedMatches.length === 0){
     alert('Selecciona al menos una casilla de partido para enviar.');
     return;
   }
 
-  const btn = document.getElementById('bulkSendBtn');
-  const originalText = btn.textContent;
-  btn.disabled = true;
-  let sent = 0, failed = 0;
-
+  const payload = [];
   for(const m of selectedMatches){
     const homeEl = document.getElementById(`score-${m.id}-home`);
     const awayEl = document.getElementById(`score-${m.id}-away`);
     if(!homeEl || !awayEl) continue;
-    
     const home = parseScoreValue_(homeEl.value);
     const away = parseScoreValue_(awayEl.value);
     if(home === null || away === null){
-      btn.disabled = false;
-      btn.textContent = originalText;
       alert(`Marcador inválido en ${m.home} vs ${m.away}. Usa números enteros entre 0 y 20.`);
       return;
     }
-    
-    btn.textContent = `Enviando ${sent + failed + 1} de ${selectedMatches.length}...`;
-    try{
-      const result = await apiPost({action:'savePrediction', matchId: m.id, name: authedName, home, away, pin: authedPin});
-      if(result.ok){ sent++; updateLocalPrediction(m.id, authedName, home, away); dirtyPredictionIds_.delete(m.id); clearPredictionDraft_(m.id); } else { failed++; }
-    } catch(err){ failed++; }
+    payload.push({matchId:m.id, home, away});
   }
+  if(payload.length === 0) return;
 
-  btn.disabled = false;
-  btn.textContent = originalText;
-  await renderMatches();
+  const btn = document.getElementById('bulkSendBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `Enviando ${payload.length} pronóstico${payload.length===1?'':'s'}...`;
 
-  if(failed === 0) alert(`✅ ¡Listo! Se enviaron correctamente tus ${sent} pronósticos.`);
-  else alert(`Se enviaron ${sent} pronósticos, pero ${failed} tuvieron un problema. Revisa e inténtalo de nuevo.`);
+  try{
+    // B2: una sola llamada HTTP. El servidor autentica al jugador una vez,
+    // valida todos los cierres y guarda el lote de forma conjunta.
+    const result = await apiPost({
+      action:'savePredictionsBulk',
+      pollaId:currentPolla.id,
+      name:authedName,
+      pin:authedPin,
+      predictions:payload
+    });
+
+    if(!result?.ok){
+      alert(humanError_(result?.error, 'No pudimos guardar tus pronósticos. Revisa tu conexión e inténtalo otra vez.'));
+      return;
+    }
+
+    const byId = new Map(payload.map(p=>[String(p.matchId), p]));
+    const savedIds = Array.isArray(result.savedIds) ? result.savedIds.map(String) : [];
+    const unchangedIds = Array.isArray(result.unchangedIds) ? result.unchangedIds.map(String) : [];
+    const confirmed = new Set([...savedIds, ...unchangedIds]);
+
+    confirmed.forEach(id=>{
+      const p = byId.get(id);
+      if(!p) return;
+      updateLocalPrediction(id, authedName, p.home, p.away);
+      dirtyPredictionIds_.delete(id);
+      clearPredictionDraft_(id);
+      selectedBulkMatches.delete(id);
+    });
+
+    await renderMatches();
+
+    const failed = Array.isArray(result.failed) ? result.failed : [];
+    if(failed.length === 0){
+      showToast_(`✅ ${confirmed.size} pronóstico${confirmed.size===1?'':'s'} guardado${confirmed.size===1?'':'s'}`);
+    }else{
+      const names = failed.slice(0,3).map(f=>{
+        const m = selectedMatches.find(x=>String(x.id)===String(f.matchId));
+        return m ? `${m.home} vs ${m.away}` : 'un partido';
+      });
+      const detail = names.length ? `:\n• ${names.join('\n• ')}` : '';
+      alert(`Se guardaron ${confirmed.size} pronóstico(s), pero ${failed.length} no pudieron enviarse${detail}. Revisa los pendientes e inténtalo otra vez.`);
+    }
+  }catch(_){
+    alert('No pudimos guardar tus pronósticos. Revisa tu conexión e inténtalo otra vez.');
+  }finally{
+    btn.disabled = false;
+    updateBulkBar();
+    if(btn.textContent.startsWith('Enviando')) btn.textContent = originalText;
+  }
 }
 
 /* ============ LINK CON PARÁMETROS ============ */
@@ -5072,7 +5110,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25B1.4';
+const APP_VERSION = 'V25B2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
