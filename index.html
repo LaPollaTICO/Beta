@@ -1622,18 +1622,39 @@ async function fetchWithTimeout_(url, options){
     clearTimeout(timeoutId);
   }
 }
-function supabaseHeaders_(includeJson=false){
+let lastApiRequestId_ = '';
+let lastTechnicalIssue_ = null;
+function newRequestId_(){
+  try{
+    const raw = crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase();
+    return `TICO-${raw}`;
+  }catch(_){
+    return `TICO-${Date.now().toString(36).toUpperCase()}`;
+  }
+}
+function rememberTechnicalIssue_(requestId, message){
+  lastTechnicalIssue_ = {
+    requestId: String(requestId || ''),
+    message: String(message || 'Error técnico'),
+    at: Date.now()
+  };
+}
+function requestCodeText_(requestId){
+  return requestId ? ` Código: ${requestId}.` : '';
+}
+function supabaseHeaders_(includeJson=false, requestId=''){
   const headers = {
     'apikey': SUPABASE_ANON_KEY,
     'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
   };
   if(includeJson) headers['Content-Type'] = 'application/json';
+  if(requestId) headers['X-Request-ID'] = requestId;
   if(hasValidAdminSession_()) headers['X-Admin-Session'] = adminSessionToken;
   if(adminStrongConfirmToken_) headers['X-Admin-Confirm'] = adminStrongConfirmToken_;
   return headers;
 }
 
-async function parseApiResponse_(res){
+async function parseApiResponse_(res, requestId=''){
   let payload = null;
   const raw = await res.text();
 
@@ -1658,15 +1679,19 @@ async function parseApiResponse_(res){
     const friendly = res.status >= 500
       ? 'No se pudo completar la operación. Intenta nuevamente.'
       : humanError_(technical, 'No se pudo completar la operación.');
+    if(res.status >= 500) rememberTechnicalIssue_(requestId, technical);
+    const shown = res.status >= 500 ? `${friendly}${requestCodeText_(requestId)}` : friendly;
     if(payload && typeof payload === 'object'){
       if(payload.ok === undefined) payload.ok = false;
       payload.technicalError = technical;
-      payload.error = friendly;
+      payload.requestId = payload.requestId || requestId || '';
+      payload.error = shown;
       return payload;
     }
-    return {ok:false, error:friendly, technicalError:technical};
+    return {ok:false, error:shown, technicalError:technical, requestId};
   }
 
+  if(payload && typeof payload === 'object' && requestId && !payload.requestId) payload.requestId = requestId;
   return payload;
 }
 
@@ -1684,18 +1709,21 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
   if(dedupe && inflightGetRequests_.has(key)) return inflightGetRequests_.get(key);
 
   const job = (async()=>{
+    const requestId = newRequestId_();
+    lastApiRequestId_ = requestId;
     if(!silent) showGlobalLoader();
     try{
       const res = await fetchWithTimeout_(
         url,
         {
           method:'GET',
-          headers:supabaseHeaders_(false)
+          headers:supabaseHeaders_(false, requestId)
         }
       );
 
-      const result = await parseApiResponse_(res);
-      if(result && !result.ok && (result.error === 'ADMIN_SESSION_EXPIRED' || result.error === 'ADMIN_SESSION_INVALID')){
+      const result = await parseApiResponse_(res, requestId);
+      const adminTechnical = String(result?.technicalError || result?.error || '');
+      if(result && !result.ok && (adminTechnical === 'ADMIN_SESSION_EXPIRED' || adminTechnical === 'ADMIN_SESSION_INVALID')){
         clearAdminSession_();
         adminPin = null;
         result.error = 'Sesión de administrador vencida. Vuelve a entrar a Admin.';
@@ -1712,7 +1740,13 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
         await new Promise(r => setTimeout(r, 700));
         return apiGet(action, params, retriesLeft - 1, silent, false);
       }
-      throw err;
+      const msg = err?.name === 'AbortError'
+        ? 'La solicitud tardó demasiado.'
+        : 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+      rememberTechnicalIssue_(requestId, err?.message || msg);
+      const wrapped = new Error(`${msg}${requestCodeText_(requestId)}`);
+      wrapped.requestId = requestId;
+      throw wrapped;
     } finally {
       if(!silent) hideGlobalLoader();
     }
@@ -1760,17 +1794,19 @@ async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=
   }
 
   const job = (async()=>{
+    const requestId = newRequestId_();
+    lastApiRequestId_ = requestId;
     if(!silent) showGlobalLoader();
     try{
       const res = await fetchWithTimeout_(
         SUPABASE_FUNCTION_URL,
         {
           method:'POST',
-          headers:supabaseHeaders_(true),
+          headers:supabaseHeaders_(true, requestId),
           body:JSON.stringify(params || {})
         }
       );
-      const result = await parseApiResponse_(res);
+      const result = await parseApiResponse_(res, requestId);
       const technicalAdminError = String(result?.technicalError || result?.error || '');
       if(
         !result?.ok &&
@@ -1800,9 +1836,14 @@ async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=
 
       return result;
     } catch(err){
+      const msg = err?.name === 'AbortError'
+        ? 'La solicitud tardó demasiado.'
+        : 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+      rememberTechnicalIssue_(requestId, err?.message || msg);
       return {
         ok:false,
-        error:'Sin conexión. Revisa tu internet e inténtalo nuevamente.'
+        error:`${msg}${requestCodeText_(requestId)}`,
+        requestId
       };
     } finally {
       if(!silent) hideGlobalLoader();
@@ -2681,7 +2722,7 @@ function renderLanding(){
             <div class="stat-item">${ICON_PEOPLE}<b>${p.participantCount}</b> participantes</div>
             <div class="stat-item">${ICON_BALL}${matchesLabel}</div>
           </div>
-          <div class="enter">Entrar a pronosticar →</div>
+          <div class="enter">Entrar a pronosticar</div>
         </div>
       </div>`;
   });
@@ -4810,7 +4851,9 @@ async function refreshSystemHealth_(){
       healthCard_('Respuesta API',`${edgeMs} ms`,edgeGood?'Normal':'Más lenta de lo esperado',edgeGood)+
       healthCard_('Consulta DB',`${dbMs} ms`,dbMs<800?'Normal':'Más lenta de lo esperado',dbMs<800)+
       healthCard_('Base de datos',result.dbOk?'Conectada':'Error',result.dbOk?'Lectura correcta':'No respondió',!!result.dbOk)+
-      healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime);
+      healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime)+
+      healthCard_('Última petición',lastApiRequestId_ || '—','Código de diagnóstico',true)+
+      healthCard_('Último error',lastTechnicalIssue_?.requestId || 'Ninguno',lastTechnicalIssue_ ? 'Referencia para soporte' : 'Sin errores técnicos en esta sesión',!lastTechnicalIssue_);
   }catch(err){
     state.textContent='⚠️ Sin respuesta';
     checked.textContent='No se pudo completar la revisión.';
@@ -5827,7 +5870,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25E1';
+const APP_VERSION = 'V25E2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
