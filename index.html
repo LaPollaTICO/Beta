@@ -122,10 +122,13 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .player-controls-row .bulk-toggle-row{margin:0;}
 .player-settings-btn{width:38px;height:38px;flex:0 0 38px;border-radius:50%;border:1px solid rgba(242,193,78,.55);background:rgba(242,193,78,.10);color:var(--floodlight);font-size:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
 .player-settings-btn:active{transform:scale(.96);}
-.player-settings-actions{display:grid;gap:10px;margin-top:14px;}
-.player-settings-action{width:100%;border:1px solid rgba(242,193,78,.28);background:rgba(242,193,78,.07);color:var(--chalk);border-radius:12px;padding:12px 14px;text-align:left;font:inherit;font-size:13px;font-weight:750;cursor:pointer;}
-.player-settings-action b{color:var(--floodlight);}
-.player-settings-referral{margin-top:12px;padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);text-align:center;color:rgba(246,243,234,.82);font-size:12.5px;}
+.player-settings-actions{display:grid;gap:10px;margin:16px auto 0;max-width:390px;}
+.player-settings-action{width:100%;border:1px solid rgba(177,128,25,.24);background:#fffaf0;color:#17251f;border-radius:14px;padding:13px 16px;text-align:center;font:inherit;font-size:13px;font-weight:700;cursor:pointer;line-height:1.35;box-shadow:0 2px 8px rgba(20,35,29,.04);}
+.player-settings-action:hover{background:#fff7e2;}
+.player-settings-action b{display:block;color:#17251f;font-size:13.5px;margin-bottom:3px;}
+.player-settings-action .settings-sub{color:#65716b;font-size:12px;font-weight:600;}
+.player-settings-referral{margin:14px auto 0;max-width:390px;padding:12px 14px;border-radius:14px;background:#fff7df;border:1px solid rgba(177,128,25,.28);text-align:center;color:#17251f;font-size:12.5px;font-weight:700;}
+.player-settings-referral b{color:#a56f00;font-size:14px;letter-spacing:.35px;}
 .connection-bar{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:999999;background:rgba(169,45,45,.97);color:white;border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:7px 13px;font-size:12px;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.28);}
 
 .pin-locked-box b{display:block; color:var(--red-card); margin-bottom:2px;}
@@ -587,11 +590,22 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
     <h2>Tu cuenta</h2>
     <p class="hint">Accesos rápidos de tu perfil</p>
     <div class="player-settings-actions">
-      <button class="player-settings-action hidden" id="setSecurityAnswerBtn" onclick="closeOverlay('playerSettingsOverlay');openRecoverySettings_()"><b>🔑 Recuperación de PIN</b><br><span id="recoverySettingsActionHint">Configurar o cambiar recuperación</span></button>
-      <button class="player-settings-action" id="whatsappConfigBtn" onclick="closeOverlay('playerSettingsOverlay');configureMyWhatsapp()"><b>📱 WhatsApp de contacto</b><br>Agregar, cambiar o eliminar tu número</button>
-      <button class="player-settings-action" onclick="closeOverlay('playerSettingsOverlay');inviteFriends()"><b>🎁 Invitar amigos</b><br>Compartir tu enlace de invitación</button>
+      <button class="player-settings-action hidden" id="setSecurityAnswerBtn" onclick="openRecoverySettings_()"><b>🔑 Recuperación de PIN</b><span class="settings-sub" id="recoverySettingsActionHint">Configurar o cambiar recuperación</span></button>
+      <button class="player-settings-action" id="whatsappConfigBtn" onclick="configureMyWhatsapp()"><b>📱 WhatsApp de contacto</b><span class="settings-sub">Agregar, cambiar o eliminar tu número</span></button>
+      <button class="player-settings-action" onclick="closeOverlay('playerSettingsOverlay');inviteFriends()"><b>🎁 Invitar amigos</b><span class="settings-sub">Compartir tu enlace de invitación</span></button>
     </div>
     <div class="player-settings-referral hidden" id="myReferralCodeBox"></div>
+  </div>
+</div>
+
+<div class="overlay" id="inviteFallbackOverlay">
+  <div class="modal" style="text-align:center">
+    <button class="close-x" onclick="closeOverlay('inviteFallbackOverlay')">✕</button>
+    <div class="modal-icon">🎁</div>
+    <h2>Invitación lista</h2>
+    <p class="hint">La imagen ya se descargó y el mensaje quedó listo para compartir</p>
+    <button class="btn-primary" onclick="openInviteWhatsappFallback_()">💬 Abrir WhatsApp</button>
+    <button class="btn-secondary" onclick="closeOverlay('inviteFallbackOverlay')">Listo</button>
   </div>
 </div>
 
@@ -2178,18 +2192,31 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.arcTo(x, y, x+w, y, r);
   ctx.closePath();
 }
+let pendingInviteWhatsappText_ = '';
 async function shareImageOrFallback(blob, text, filename){
   const file = new File([blob], filename, {type:'image/png'});
   if(navigator.canShare && navigator.canShare({files:[file]})){
-    try{ await navigator.share({files:[file], text}); return; }catch(e){}
+    try{ await navigator.share({files:[file], text}); return; }catch(e){
+      if(e?.name === 'AbortError') return;
+    }
   }
+
+  // Desktop / navegadores sin Web Share con archivos: descargamos la imagen,
+  // pero NO abrimos una pestaña desde un setTimeout. Eso pierde el gesto del
+  // usuario y Chrome lo interpreta como popup. El botón del modal de abajo sí
+  // nace de un toque real y por eso WhatsApp puede abrirse normalmente.
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => {
-    alert('📥 Se descargó la imagen. Súbela a tu estado de WhatsApp.');
-    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
-  }, 400);
+  setTimeout(() => URL.revokeObjectURL(url), 1200);
+  pendingInviteWhatsappText_ = text;
+  try{ await copyTextSafe(text); }catch(_){ }
+  openOverlay('inviteFallbackOverlay');
+}
+function openInviteWhatsappFallback_(){
+  const text = pendingInviteWhatsappText_ || '';
+  closeOverlay('inviteFallbackOverlay');
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
 }
 
 /* ============ LANDING ============ */
@@ -2876,6 +2903,8 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   updateRecoveryButton_();
   const myStatus = await getMyParticipantStatus_(true);
   myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
+  if(myStatus?.referralCode && !myReferralCode) myReferralCode = myStatus.referralCode;
+  renderMyReferralCode_();
   checkMyPaymentStatus();
 }
 
@@ -3272,7 +3301,7 @@ function updatePredictionProgress_(){
   const sent=relevant.filter(m=>(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))).length;
   const pendingOpen=relevant.filter(m=>!isClosed(m.closeAt) && (dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))));
   const pct=Math.round(sent*100/relevant.length);
-  text.innerHTML=`Tus pronósticos enviados <b>${sent}/${relevant.length}</b>`;
+  text.innerHTML=`Tus pronósticos <b>${sent}/${relevant.length}</b> enviados`;
   fill.style.width=`${pct}%`;
   next.classList.toggle('hidden', pendingOpen.length===0);
   box.classList.add('show');
@@ -5033,7 +5062,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25B1.2';
+const APP_VERSION = 'V25B1.3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
