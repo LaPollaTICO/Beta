@@ -2367,7 +2367,6 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   //    ocultar (a menos que la Polla ya esté finalizada).
   updateWinnersButtonVisibility();
   document.getElementById('playerName').value = lastPlayerName_();
-  document.getElementById('inviteRow').classList.add('hidden');
   resetAuthUI();
   await loadMatches();
   if(countdownTimer) clearInterval(countdownTimer);
@@ -5034,7 +5033,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25B1.1';
+const APP_VERSION = 'V25B1.2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
