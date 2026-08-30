@@ -1019,7 +1019,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
           <div id="compactionPrecheckStatus" class="hint" style="margin-top:8px;">Comprueba que el ZIP siga intacto y que la Polla no haya cambiado desde el último respaldo.</div>
           <div id="compactionPrecheckChecks" class="compaction-checks"></div>
           <button class="btn-secondary" id="compactionPrecheckBtn" style="margin-top:10px;" onclick="runCompactionPrecheck_()">🔎 Verificar antes de compactar</button>
-          <p class="hint" style="margin:8px 0 0;">F3 todavía no borra datos. El pre-chequeo valida el respaldo y permite preparar un sello inmutable para la futura transacción.</p>
+          <p class="hint" style="margin:8px 0 0;">El pre-chequeo valida el respaldo y permite preparar el sello que exige la compactación transaccional.</p>
         </div>
         <div class="compaction-precheck" style="margin-top:10px;">
           <div class="compaction-precheck-title"><span>Sello de compactación</span><span id="compactionSealBadge" class="secure-backup-badge">Sin preparar</span></div>
@@ -1027,6 +1027,12 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
           <div id="compactionSealDetails" class="compaction-checks"></div>
           <button class="btn-secondary" id="compactionSealBtn" style="margin-top:10px;" onclick="prepareCompactionSeal_()">🛡️ Preparar sello seguro</button>
           <p class="hint" style="margin:8px 0 0;">Preparar el sello no elimina partidos, pronósticos, participantes ni imágenes.</p>
+        </div>
+        <div class="compaction-precheck" style="margin-top:10px;">
+          <div class="compaction-precheck-title"><span>Compactación V2</span><span id="compactionRunBadge" class="secure-backup-badge">Protegida</span></div>
+          <div id="compactionRunStatus" class="hint" style="margin-top:8px;">Solo se habilita con respaldo verificado + pre-chequeo aprobado + sello preparado. La operación de base de datos es atómica.</div>
+          <button class="btn-secondary" id="compactionRunBtn" style="margin-top:10px;" onclick="compactPollaV2_()">🗜️ Compactar datos históricos</button>
+          <p class="hint" style="margin:8px 0 0;">F4 compacta filas pesadas de Postgres y conserva un snapshot histórico completo. Las imágenes originales todavía se conservan; su limpieza segura se hará en la siguiente capa.</p>
         </div>
         <p class="hint" style="margin-top:10px;">Solo se puede generar cuando la Polla está finalizada y archivada. El ZIP se guarda en Storage privado y además se descarga mediante un enlace temporal.</p>
       </div>
@@ -5710,7 +5716,7 @@ async function runCompactionPrecheck_(){
     const result=await apiPost({action:'getCompactionPrecheck',pollaId:currentPolla.id,adminName:adminName});
     if(!result?.ok) throw new Error(result?.error||'No se pudo ejecutar el pre-chequeo.');
     renderCompactionPrecheck_(result);
-    if(result.ready) alert('✅ Pre-chequeo aprobado. El respaldo está íntegro y los datos no cambiaron desde que se generó.\n\nF3 todavía no elimina nada.');
+    if(result.ready) alert('✅ Pre-chequeo aprobado. El respaldo está íntegro y los datos no cambiaron desde que se generó.\n\nF4 aún no compacta hasta que pulses el botón de Compactación V2.');
   }catch(e){
     alert(e?.message||'No se pudo ejecutar el pre-chequeo.');
   }finally{
@@ -5769,12 +5775,48 @@ async function prepareCompactionSeal_(){
     const result=await apiPost({action:'prepareCompactionSeal',pollaId:currentPolla.id,adminName:adminName});
     if(!result?.ok) throw new Error(result?.error||'No se pudo preparar el sello.');
     renderCompactionSealStatus_({ok:true,hasSeal:true,seal:result.seal});
-    alert('✅ Sello preparado. El estado aprobado quedó congelado en servidor.\n\nF3 no ha eliminado ningún dato.');
+    alert('✅ Sello preparado. El estado aprobado quedó congelado en servidor.\n\nEl sello quedó preparado; aún no se eliminó ningún dato.');
   }catch(e){
     alert(e?.message||'No se pudo preparar el sello de compactación.');
   }finally{
     if(btn){btn.disabled=false;btn.textContent=old||'🛡️ Preparar sello seguro';}
   }
+}
+
+
+async function compactPollaV2_(){
+  if(!currentPolla) return;
+  const pre=await apiPost({action:'getCompactionPrecheck',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!pre?.ok || !pre.ready){
+    alert('⛔ La compactación está bloqueada. Ejecuta primero el pre-chequeo y asegúrate de que todo esté en Listo.');
+    return;
+  }
+  const sealState=await apiPostSilent({action:'getCompactionSealStatus',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!sealState?.ok || !sealState.hasSeal || sealState.seal?.status==='consumed'){
+    alert('⛔ Falta un sello preparado y vigente. Prepara el sello seguro antes de compactar.');
+    return;
+  }
+  const message=`Confirma tu clave para compactar la Polla #${currentPolla.number}. Esta acción elimina de Postgres las filas pesadas de partidos, pronósticos, participantes y referidos, pero conserva el snapshot histórico y el ZIP verificado.`;
+  const result=await withSensitiveAdminConfirmation_('compactPollaV2',message,async()=>{
+    if(!confirm(`🗜️ COMPACTACIÓN V2 — Polla #${currentPolla.number}\n\nEsta operación es irreversible desde la interfaz. El respaldo ZIP y el snapshot histórico quedarán conservados.\n\nLas imágenes originales NO se borrarán en F4.\n\n¿Compactar ahora?`)) return null;
+    const btn=document.getElementById('compactionRunBtn');
+    const old=btn?.textContent;
+    if(btn){btn.disabled=true;btn.textContent='Compactando…';}
+    try{
+      return await apiPost({action:'compactPollaV2',pollaId:currentPolla.id,sealId:sealState.seal.id,adminName:adminName});
+    }finally{
+      if(btn){btn.disabled=false;btn.textContent=old||'🗜️ Compactar datos históricos';}
+    }
+  });
+  if(!result) return;
+  if(!result.ok){ alert(result.error||'No se pudo compactar. No se aplicaron cambios parciales.'); return; }
+  const badge=document.getElementById('compactionRunBadge');
+  const status=document.getElementById('compactionRunStatus');
+  if(badge){badge.textContent='✓ Compactada';badge.className='secure-backup-badge ok';badge.style.color='#111';}
+  if(status){status.className='compaction-ready';status.textContent=`Compactación completada. ${Number(result.matchesRemoved)||0} partidos y ${Number(result.predictionsRemoved)||0} pronósticos salieron de las tablas operativas; el histórico protegido permanece disponible.`;}
+  allPollas=await apiGet('getPollas').catch(()=>allPollas);
+  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  alert('✅ Compactación V2 completada dentro de una transacción. El histórico protegido y el respaldo seguro se conservaron.');
 }
 
 async function createSecurePollaBackup_(){
@@ -5806,7 +5848,7 @@ async function createSecurePollaBackup_(){
 Huella: ${shortHash || 'registrada'}
 Tamaño: ${bytesLabel_(result.receipt?.sizeBytes)}
 
-El pre-chequeo y el sello seguro F3 están habilitados. La compactación todavía NO borra datos en esta versión.`);
+El pre-chequeo y el sello seguro están habilitados. La compactación V2 solo se ejecuta desde su botón y exige confirmación reforzada.`);
   }catch(e){
     alert(e?.message||'No se pudo generar el respaldo seguro. No se modificó ningún dato de la Polla.');
   }finally{
@@ -6235,7 +6277,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F3';
+const APP_VERSION = 'V25F4';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
@@ -6320,6 +6362,16 @@ function showAppUpdateNotice(waitingVersion=''){
     const btn = document.getElementById('applyAppUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
     waiting.postMessage({type:'SKIP_WAITING'});
+    // F4: algunos navegadores/PWA tardan en emitir controllerchange aunque el
+    // worker nuevo ya se haya activado. No dejamos el botón eternamente en
+    // “Actualizando…”. Si en 8 s no llegó el evento, hacemos una única recarga
+    // controlada; el SW nuevo usa network-first para servir el HTML fresco.
+    setTimeout(()=>{
+      if(!appUpdateApplying || appUpdateReloaded_) return;
+      appUpdateReloaded_ = true;
+      removeAppUpdateNotice_();
+      location.reload();
+    },8000);
   });
 }
 
