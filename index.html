@@ -314,6 +314,12 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 
 .modal label{display:block; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a6b63; margin:14px 0 5px;}
 .modal input, .modal select, .modal textarea{width:100%; padding:11px 12px; border-radius:9px; border:1px solid #d8d3c3; font-family:'Inter'; font-size:15px; background:#fff;}
+/* D5: switch operativo compacto. Esta regla va después del estilo general de .modal input para que no se estire al 100%. */
+.modal .admin-control-toggle{grid-template-columns:minmax(0,1fr) 28px;}
+.modal .admin-control-toggle input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:26px !important;min-width:26px;max-width:26px;height:16px;padding:0 !important;margin:0 auto !important;border:0;border-radius:999px;background:#c7ccc9;position:relative;justify-self:center;box-sizing:border-box;cursor:pointer;}
+.modal .admin-control-toggle input[type="checkbox"]::after{content:'';position:absolute;width:12px;height:12px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .18s ease;}
+.modal .admin-control-toggle input[type="checkbox"]:checked{background:#c99a24;}
+.modal .admin-control-toggle input[type="checkbox"]:checked::after{transform:translateX(10px);}
 .modal textarea{min-height:90px; resize:vertical;}
 .modal .row2{display:flex; gap:12px;}
 .modal .row2 > div{flex:1;}
@@ -502,7 +508,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
     <button onclick="openArchivedPollas()">🕓 Anteriores</button>
   </div>
   <div class="landing-links">
-    <button onclick="window.open(TUTORIAL_VIDEO_URL, '_blank')">▶️ ¿Cómo jugar?</button>
+    <button onclick="openTutorial_()">▶️ ¿Cómo jugar?</button>
     <button onclick="openQR(siteUrl(), 'La Polla &quot;TICO&quot;')">📱 QR</button>
     <button onclick="openHallOfFame()">🏆 Ganadores</button>
   </div>
@@ -1220,8 +1226,8 @@ const SUPABASE_FUNCTION_URL = 'https://iiuppczbeezwxevlnahk.supabase.co/function
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpdXBwY3piZWV6d3hldmxuYWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2MjY0MjMsImV4cCI6MjEwMzIwMjQyM30.Q6M-p1IUXCw3zPGGsR-BYiRen5oQWeLMfpzuf382mS0';
 const ADMIN_NAME = "Manolo";
 const ADMIN_PHONE = "51994339859";
-// 👉 Reemplaza esta URL cuando subas el video de "cómo jugar la Polla" a YouTube.
-const TUTORIAL_VIDEO_URL = "https://www.youtube.com/@TU_CANAL_AQUI";
+// Configuración de ejecución: el backend puede sobrescribir estos valores desde app_config.
+const DEFAULT_TUTORIAL_VIDEO_URL = "https://www.youtube.com/@TU_CANAL_AQUI";
 const PRECIO_POR_PERSONA = 10; // S/10 de inscripción por participante
 const PORCENTAJE_POZO = 0.805; // 80.5% de lo recaudado se reparte como premios
 const FREE_CONTEST_TOP_PERCENT_UI = 0.60; // solo para mostrar el % en el texto del admin; el corte real (con empates en la frontera) lo calcula el servidor
@@ -1325,7 +1331,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true};
+let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
 let landingTimer = null;
@@ -2478,13 +2484,21 @@ function openInviteWhatsappFallback_(){
   window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
 }
 
+function openTutorial_(){
+  const url=String(appConfig_.tutorialUrl || DEFAULT_TUTORIAL_VIDEO_URL || '').trim();
+  if(!url){ showToast_('Tutorial todavía no disponible'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
 function applyAppConfig_(cfg){
   if(!cfg || typeof cfg !== 'object') return;
   appConfig_ = {
     maintenanceEnabled: !!cfg.maintenanceEnabled,
     maintenanceMessage: String(cfg.maintenanceMessage || ''),
     predictionsEnabled: cfg.predictionsEnabled !== false,
-    registrationsEnabled: cfg.registrationsEnabled !== false
+    registrationsEnabled: cfg.registrationsEnabled !== false,
+    tutorialUrl: String(cfg.tutorialUrl || appConfig_.tutorialUrl || DEFAULT_TUTORIAL_VIDEO_URL),
+    updateCheckSeconds: Math.min(900, Math.max(60, Number(cfg.updateCheckSeconds || appConfig_.updateCheckSeconds || 120)))
   };
   renderAppModeBanner_();
   renderAdminConfig_();
@@ -5724,7 +5738,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D4.5';
+const APP_VERSION = 'V25D5';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
@@ -5878,9 +5892,17 @@ if('serviceWorker' in navigator){
         await probeLatestServiceWorker_();
       };
 
-      // Una primera comprobación poco después de abrir y luego periódicamente.
+      // Una primera comprobación poco después de abrir y luego con una cadencia
+      // centralizada en app_config. El mínimo es 60 s y el máximo 15 min.
       setTimeout(checkForAppUpdate_, 12000);
-      setInterval(checkForAppUpdate_, 2 * 60 * 1000);
+      const scheduleNextUpdateCheck_ = () => {
+        const seconds = Math.min(900, Math.max(60, Number(appConfig_.updateCheckSeconds || 120)));
+        setTimeout(async () => {
+          await checkForAppUpdate_();
+          scheduleNextUpdateCheck_();
+        }, seconds * 1000);
+      };
+      scheduleNextUpdateCheck_();
       document.addEventListener('visibilitychange', () => {
         if(document.visibilityState === 'visible') checkForAppUpdate_();
       });
