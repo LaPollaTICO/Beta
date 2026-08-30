@@ -139,6 +139,16 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .matches-view-tab.active{background:linear-gradient(135deg,#f3c552,#e8ad2f);color:#18231e;box-shadow:0 2px 10px rgba(138,95,11,.18);}
 .matches-view-tab .tab-count{margin-left:5px;font-size:11px;opacity:.72;font-weight:800;}
 .matches-view-empty{margin:22px 0 8px;text-align:center;padding:26px 18px;border:1px dashed rgba(12,39,32,.16);border-radius:16px;color:#18231e;background:rgba(255,255,255,.62);font-size:13.5px;line-height:1.45;}
+.prediction-progress{display:none;margin:-6px 0 18px;padding:12px 14px;border:1px solid rgba(12,39,32,.10);border-radius:14px;background:rgba(255,255,255,.58);color:#18231e;}
+.prediction-progress.show{display:block;}
+.prediction-progress-top{display:flex;align-items:center;gap:10px;justify-content:space-between;}
+.prediction-progress-title{font-size:12.5px;font-weight:800;line-height:1.3;}
+.prediction-progress-title b{color:#a8750c;}
+.prediction-progress-next{border:0;background:transparent;color:#8b650f;font:inherit;font-size:11.5px;font-weight:800;padding:5px 0;cursor:pointer;white-space:nowrap;}
+.prediction-progress-track{height:5px;border-radius:999px;background:rgba(12,39,32,.10);overflow:hidden;margin-top:9px;}
+.prediction-progress-fill{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#e8ad2f,#f3c552);transition:width .2s ease;}
+.status-line.pending{color:#d8a62c;font-weight:800;}
+.status-line.saved{color:#8FD9AA;font-weight:800;}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;}}
 
 .date-group-label{font-family:'Anton', sans-serif; font-size:15px; letter-spacing:1px; color:rgba(246,243,234,0.55); text-transform:uppercase; flex-shrink:0; white-space:nowrap;}
@@ -510,6 +520,13 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
   <div class="matches-view-tabs" id="matchesViewTabs" role="tablist" aria-label="Partidos de la Polla">
     <button class="matches-view-tab active" id="matchesTabUpcoming" type="button" role="tab" aria-selected="true" onclick="setMatchesView_('upcoming')">Por jugar <span class="tab-count" id="matchesUpcomingCount"></span></button>
     <button class="matches-view-tab" id="matchesTabResolved" type="button" role="tab" aria-selected="false" onclick="setMatchesView_('resolved')">Resueltos <span class="tab-count" id="matchesResolvedCount"></span></button>
+  </div>
+  <div class="prediction-progress" id="predictionProgress">
+    <div class="prediction-progress-top">
+      <div class="prediction-progress-title" id="predictionProgressText"></div>
+      <button class="prediction-progress-next hidden" id="nextPendingPredictionBtn" type="button" onclick="goToNextPendingPrediction_()">Ir al siguiente</button>
+    </div>
+    <div class="prediction-progress-track"><div class="prediction-progress-fill" id="predictionProgressFill"></div></div>
   </div>
   <div id="matchesContainer"></div>
   <div class="mini-leaderboard hidden" id="miniLeaderboard"></div>
@@ -1156,8 +1173,44 @@ let myWhatsapp_ = '';
 let hasSecurityAnswer_ = false;
 const dirtyPredictionIds_ = new Set();
 const inflightMutationKeys_ = new Map();
+const PREDICTION_DRAFT_PREFIX_ = 'tico:predictionDraft:';
 
-
+function predictionDraftKey_(matchId){
+  if(!currentPolla?.id || !authedName) return '';
+  return `${PREDICTION_DRAFT_PREFIX_}${currentPolla.id}:${normalizeName(authedName)}:${matchId}`;
+}
+function getPredictionDraft_(matchId){
+  try{
+    const key=predictionDraftKey_(matchId); if(!key) return null;
+    const raw=localStorage.getItem(key); if(!raw) return null;
+    const d=JSON.parse(raw);
+    if(!d || !Number.isInteger(Number(d.home)) || !Number.isInteger(Number(d.away))) return null;
+    return {home:Number(d.home),away:Number(d.away),savedAt:Number(d.savedAt)||0};
+  }catch(_){ return null; }
+}
+function savePredictionDraft_(matchId, home, away){
+  try{
+    const key=predictionDraftKey_(matchId); if(!key || home===null || away===null) return;
+    localStorage.setItem(key, JSON.stringify({home,away,savedAt:Date.now()}));
+  }catch(_){}
+}
+function clearPredictionDraft_(matchId){
+  try{ const key=predictionDraftKey_(matchId); if(key) localStorage.removeItem(key); }catch(_){}
+}
+function restorePredictionDrafts_(){
+  if(!authedName || !currentPolla) return 0;
+  let recovered=0;
+  for(const m of matches){
+    const draft=getPredictionDraft_(m.id);
+    if(!draft) continue;
+    if(m.resultSubmitted || m.isCanceled || isClosed(m.closeAt)){ clearPredictionDraft_(m.id); continue; }
+    const mine=(predictionsCache[m.id]||[]).find(p=>normalizeName(p.name)===normalizeName(authedName));
+    const differs=!mine || Number(mine.home)!==draft.home || Number(mine.away)!==draft.away;
+    if(differs){ dirtyPredictionIds_.add(m.id); recovered++; }
+    else clearPredictionDraft_(m.id);
+  }
+  return recovered;
+}
 
 function humanError_(value, fallback='No se pudo completar la operación. Intenta nuevamente.'){
   const msg = String(value || '').trim();
@@ -1605,7 +1658,7 @@ async function sendAllPredictions(){
     btn.textContent = `Enviando ${sent + failed + 1} de ${selectedMatches.length}...`;
     try{
       const result = await apiPost({action:'savePrediction', matchId: m.id, name: authedName, home, away, pin: authedPin});
-      if(result.ok){ sent++; updateLocalPrediction(m.id, authedName, home, away); dirtyPredictionIds_.delete(m.id); } else { failed++; }
+      if(result.ok){ sent++; updateLocalPrediction(m.id, authedName, home, away); dirtyPredictionIds_.delete(m.id); clearPredictionDraft_(m.id); } else { failed++; }
     } catch(err){ failed++; }
   }
 
@@ -2779,7 +2832,9 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   statusEl.textContent = registered ? '✓ ¡Bienvenido! PIN creado correctamente.' : `✓ Bienvenido de nuevo, ${authedName}`;
   statusEl.className = 'name-status ok';
   await refreshMyPredictions();
+  const recoveredDrafts = restorePredictionDrafts_();
   await renderMatches();
+  if(recoveredDrafts > 0) showToast_(`📝 Recuperamos ${recoveredDrafts === 1 ? 'un pronóstico sin enviar' : recoveredDrafts + ' pronósticos sin enviar'}`);
   updateStreakBadge();
 
   // 🔖 Antes solo se sabía el código de invitación en el momento de invitar
@@ -3185,6 +3240,48 @@ function updateMatchesViewTabs_(){
   if(resCount) resCount.textContent = resolvedN ? String(resolvedN) : '';
 }
 
+function updatePredictionProgress_(){
+  const box=document.getElementById('predictionProgress');
+  const text=document.getElementById('predictionProgressText');
+  const fill=document.getElementById('predictionProgressFill');
+  const next=document.getElementById('nextPendingPredictionBtn');
+  if(!box || !text || !fill || !next) return;
+  if(!authedName || matchesView_ !== 'upcoming'){ box.classList.remove('show'); return; }
+  const relevant=matches.filter(m=>!m.isCanceled && !m.resultSubmitted);
+  if(!relevant.length){ box.classList.remove('show'); return; }
+  const sent=relevant.filter(m=>(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))).length;
+  const pendingOpen=relevant.filter(m=>!isClosed(m.closeAt) && (dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))));
+  const pct=Math.round(sent*100/relevant.length);
+  text.innerHTML=`Tus pronósticos <b>${sent}/${relevant.length}</b> enviados`;
+  fill.style.width=`${pct}%`;
+  next.classList.toggle('hidden', pendingOpen.length===0);
+  box.classList.add('show');
+}
+function goToNextPendingPrediction_(){
+  if(matchesView_ !== 'upcoming') setMatchesView_('upcoming');
+  const target=getSortedMatches().find(m=>!m.isCanceled && !m.resultSubmitted && !isClosed(m.closeAt) && (
+    dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>authedName && normalizeName(p.name)===normalizeName(authedName))
+  ));
+  if(!target){ showToast_('✓ Estás al día con tus pronósticos'); return; }
+  const groupKey=dateGroupKey(target.closeAt);
+  if(collapsedDateGroups.has(groupKey)){ collapsedDateGroups.delete(groupKey); renderMatches(); }
+  requestAnimationFrame(()=>document.getElementById(`card-${target.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}));
+}
+function predictionStatusFor_(matchId, mine){
+  if(dirtyPredictionIds_.has(matchId)) return {text: mine ? '📝 Cambio pendiente' : '📝 Pendiente de enviar', cls:'pending'};
+  if(mine) return {text:'✓ Guardado', cls:'saved'};
+  return {text:'', cls:''};
+}
+function refreshPredictionStatus_(matchId){
+  const mine=(predictionsCache[matchId]||[]).find(p=>authedName && normalizeName(p.name)===normalizeName(authedName));
+  const state=predictionStatusFor_(matchId,mine);
+  const el=document.getElementById(`status-${matchId}`);
+  if(el){ el.textContent=state.text; el.classList.toggle('pending',state.cls==='pending'); el.classList.toggle('saved',state.cls==='saved'); }
+  const btn=document.getElementById(`submit-${matchId}`);
+  if(btn && dirtyPredictionIds_.has(matchId)) btn.textContent=mine?'Guardar cambio':'Enviar pronóstico';
+  updatePredictionProgress_();
+}
+
 function setMatchesView_(view){
   if(view !== 'upcoming' && view !== 'resolved') return;
   if(matchesView_ === view) return;
@@ -3212,6 +3309,7 @@ async function renderMatches(){
   container.innerHTML = '';
 
   updateMatchesViewTabs_();
+  updatePredictionProgress_();
   const allSorted = getSortedMatches();
   const sorted = allSorted.filter(m => matchesView_ === 'resolved'
     ? isResolvedViewMatch_(m)
@@ -3435,8 +3533,11 @@ function renderLockedBody_(m, pollHTML){
 
 /* ---- ESTADO 5: partido abierto y el usuario puede pronosticar ---- */
 function renderOpenBody_(m, mine, pollHTML){
-  const homeVal = mine ? mine.home : 0;
-  const awayVal = mine ? mine.away : 0;
+  const draft = getPredictionDraft_(m.id);
+  const homeVal = draft ? draft.home : (mine ? mine.home : 0);
+  const awayVal = draft ? draft.away : (mine ? mine.away : 0);
+  if(draft && (!mine || Number(mine.home)!==Number(draft.home) || Number(mine.away)!==Number(draft.away))) dirtyPredictionIds_.add(m.id);
+  const statusState = predictionStatusFor_(m.id, mine);
   const shareBtn = mine ? `<button class="submit-btn share" onclick="sharePrediction('${m.id}')">📲 Compartir mi pronóstico</button>` : '';
   const isChecked = selectedBulkMatches.has(m.id);
 
@@ -3446,14 +3547,14 @@ function renderOpenBody_(m, mine, pollHTML){
             <input type="checkbox" id="bulk-check-${m.id}" ${isChecked ? 'checked' : ''} onchange="toggleMatchBulkSelect('${m.id}', this.checked)">
             <span id="bulk-text-${m.id}">${isChecked ? '✅ Incluido para envío masivo' : '⬜ Omitir este partido'}</span>
           </label>
-          <div class="status-line" id="status-${m.id}">${mine ? `Último enviado: ${mine.home} - ${mine.away}` : 'Aún no enviado'}</div>
+          <div class="status-line ${statusState.cls}" id="status-${m.id}">${statusState.text}</div>
           ${shareBtn}
         </div>` : `
         <div class="match-footer">
           <button class="submit-btn" id="submit-${m.id}" onclick="submitPrediction('${m.id}')">
             ${mine ? 'Actualizar pronóstico' : 'Enviar pronóstico'}
           </button>
-          <div class="status-line" id="status-${m.id}">${mine ? `Enviado: ${mine.home} - ${mine.away}` : ''}</div>
+          <div class="status-line ${statusState.cls}" id="status-${m.id}">${statusState.text}</div>
           ${shareBtn}
         </div>`;
 
@@ -3550,8 +3651,14 @@ function onScoreInput(matchId){
   const awayNow = parseScoreValue_(awayEl?.value ?? '');
   const differs = homeNow === null || awayNow === null || !mine ||
     Number(mine.home)!==homeNow || Number(mine.away)!==awayNow;
-  if(differs) dirtyPredictionIds_.add(matchId);
-  else dirtyPredictionIds_.delete(matchId);
+  if(differs){
+    dirtyPredictionIds_.add(matchId);
+    if(homeNow !== null && awayNow !== null) savePredictionDraft_(matchId, homeNow, awayNow);
+  } else {
+    dirtyPredictionIds_.delete(matchId);
+    clearPredictionDraft_(matchId);
+  }
+  refreshPredictionStatus_(matchId);
 
   if(bulkMode){
     selectedBulkMatches.add(matchId);
@@ -3589,6 +3696,7 @@ async function submitPrediction(matchId){
   const hadMineBefore = (predictionsCache[matchId] || []).some(p=>normalizeName(p.name)===normalizeName(authedName));
   updateLocalPrediction(matchId, authedName, home, away);
   dirtyPredictionIds_.delete(matchId);
+  clearPredictionDraft_(matchId);
   if(adminPredictionSummaryPollaId===currentPolla.id && !hadMineBefore){
     adminPredictionSummaryCache[matchId] = Number(adminPredictionSummaryCache[matchId] || 0) + 1;
   }
@@ -4905,7 +5013,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25A3';
+const APP_VERSION = 'V25B1';
 const LAST_APPLIED_SW_KEY_ = 'tico:lastAppliedServiceWorkerVersion';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
