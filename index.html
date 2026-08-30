@@ -1422,6 +1422,36 @@ function closeOverlay(id){
   el.style.zIndex = '';
 }
 
+let adminSessionCountdownTimer_ = null;
+function updateAdminSessionCountdown_(){
+  const el = document.getElementById('adminSessionMini');
+  if(!el) return;
+  if(!adminSessionExpiresAt){
+    el.textContent = hasValidAdminSession_() ? 'Sesión Admin activa' : 'Sesión Admin expirada';
+    return;
+  }
+  const remainingMs = adminSessionExpiresAt - Date.now();
+  if(remainingMs <= 0){
+    el.textContent = 'Sesión Admin expirada';
+    return;
+  }
+  const mins = Math.ceil(remainingMs / 60000);
+  if(mins <= 2){
+    el.textContent = `Sesión Admin · por expirar (${mins} min)`;
+  } else {
+    el.textContent = `Sesión Admin · aprox. ${mins} min restantes`;
+  }
+}
+function ensureAdminSessionCountdown_(){
+  updateAdminSessionCountdown_();
+  if(adminSessionCountdownTimer_) return;
+  adminSessionCountdownTimer_ = setInterval(()=>{
+    const adminOpen = document.getElementById('adminOverlay')?.classList.contains('show');
+    const summaryOpen = document.getElementById('tabResumen')?.classList.contains('active');
+    if(adminOpen && summaryOpen) updateAdminSessionCountdown_();
+  }, 30000);
+}
+
 const APP_TIME_ZONE = 'America/Lima';
 function peruParts_(date){
   const d = date instanceof Date ? date : new Date(date);
@@ -4504,7 +4534,7 @@ function applyArchivedAdminLock_(){
 function switchAdminTab(tabId){
   document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
-  if(tabId === 'tabResumen') renderAdminOverview_();
+  if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
 }
 
 function renderAdminOverview_(){
@@ -4547,8 +4577,8 @@ function renderAdminOverview_(){
   health.innerHTML = checks.map(([kind,text])=>`<div class="admin-health-item ${kind}">${text}</div>`).join('');
 
   if(session){
-    const mins = adminSessionExpiresAt ? Math.max(0, Math.ceil((adminSessionExpiresAt-Date.now())/60000)) : 0;
-    session.textContent = mins > 0 ? `Sesión Admin · aprox. ${mins} min restantes` : 'Sesión Admin activa';
+    updateAdminSessionCountdown_();
+    ensureAdminSessionCountdown_();
   }
 }
 
@@ -5560,7 +5590,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D4.1';
+const APP_VERSION = 'V25D4.2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
