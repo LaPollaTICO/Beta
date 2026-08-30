@@ -315,11 +315,11 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .modal label{display:block; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a6b63; margin:14px 0 5px;}
 .modal input, .modal select, .modal textarea{width:100%; padding:11px 12px; border-radius:9px; border:1px solid #d8d3c3; font-family:'Inter'; font-size:15px; background:#fff;}
 /* D5: switch operativo compacto. Esta regla va después del estilo general de .modal input para que no se estire al 100%. */
-.modal .admin-control-toggle{grid-template-columns:minmax(0,1fr) 28px;}
-.modal .admin-control-toggle input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:26px !important;min-width:26px;max-width:26px;height:16px;padding:0 !important;margin:0 auto !important;border:0;border-radius:999px;background:#c7ccc9;position:relative;justify-self:center;box-sizing:border-box;cursor:pointer;}
-.modal .admin-control-toggle input[type="checkbox"]::after{content:'';position:absolute;width:12px;height:12px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .18s ease;}
+.modal .admin-control-toggle{grid-template-columns:minmax(0,1fr) 24px;}
+.modal .admin-control-toggle input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:22px !important;min-width:22px;max-width:22px;height:14px;padding:0 !important;margin:0 auto !important;border:0;border-radius:999px;background:#c7ccc9;position:relative;justify-self:center;box-sizing:border-box;cursor:pointer;}
+.modal .admin-control-toggle input[type="checkbox"]::after{content:'';position:absolute;width:10px;height:10px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .18s ease;}
 .modal .admin-control-toggle input[type="checkbox"]:checked{background:#c99a24;}
-.modal .admin-control-toggle input[type="checkbox"]:checked::after{transform:translateX(10px);}
+.modal .admin-control-toggle input[type="checkbox"]:checked::after{transform:translateX(8px);}
 .modal textarea{min-height:90px; resize:vertical;}
 .modal .row2{display:flex; gap:12px;}
 .modal .row2 > div{flex:1;}
@@ -350,6 +350,20 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 .admin-health-item{border-radius:10px;padding:9px 11px;font-size:12px;font-weight:750;line-height:1.4;background:rgba(255,255,255,.65);border:1px solid rgba(23,87,52,.10);color:#26362e;}
 .admin-health-item.ok{border-color:rgba(46,160,90,.28);}
 .admin-health-item.warn{border-color:rgba(210,153,22,.38);background:rgba(255,244,204,.58);}
+.system-health-hero{border:1px solid rgba(23,87,52,.12);background:rgba(255,255,255,.72);border-radius:14px;padding:14px;margin-bottom:10px;text-align:center;}
+.system-health-state{font-size:15px;font-weight:900;color:#17382c;}
+.system-health-sub{font-size:11px;color:#707873;font-weight:650;margin-top:4px;}
+.system-health-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;}
+.system-health-card{background:#fff;border:1px solid rgba(23,87,52,.10);border-radius:12px;padding:10px;text-align:center;}
+.system-health-card .k{font-size:10px;color:#7b817d;text-transform:uppercase;letter-spacing:.04em;font-weight:800;}
+.system-health-card .v{font-size:14px;color:#17382c;font-weight:900;margin-top:4px;word-break:break-word;}
+.system-health-card .s{font-size:10px;color:#777f7a;margin-top:3px;font-weight:650;}
+.system-health-card.good{border-color:rgba(46,160,90,.30);}
+.system-health-card.bad{border-color:rgba(198,77,55,.32);background:rgba(255,239,235,.68);}
+.system-health-actions{display:flex;justify-content:center;margin-top:8px;}
+.system-health-actions button{width:auto;min-width:150px;margin:0;}
+@media(max-width:520px){.system-health-grid{grid-template-columns:1fr 1fr;}}
+
 .admin-session-mini{text-align:center;font-size:11px;color:#68776f;margin:0 0 10px;}
 @media(max-width:420px){.admin-overview-grid{grid-template-columns:1fr 1fr;gap:8px}.admin-overview-card{padding:10px}.admin-overview-card .v{font-size:20px}}
 
@@ -846,6 +860,7 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       <button data-tab="tabPartidos" onclick="switchAdminTab('tabPartidos')">Partidos</button>
       <button data-tab="tabPremios" onclick="switchAdminTab('tabPremios')">Premios</button>
       <button data-tab="tabDatos" onclick="switchAdminTab('tabDatos')">Datos</button>
+      <button data-tab="tabSalud" onclick="switchAdminTab('tabSalud')">Salud</button>
     </div>
 
     <div class="admin-pane active" id="tabResumen">
@@ -882,6 +897,17 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
       <h3 style="margin-top:8px;">Chequeo rápido</h3>
       <div class="admin-health-list" id="adminHealthList"></div>
       <p class="hint" style="margin-top:10px;">Este resumen es informativo y no bloquea ninguna acción.</p>
+    </div>
+
+    <div class="admin-pane" id="tabSalud">
+      <div class="system-health-hero">
+        <div class="system-health-state" id="systemHealthState">Estado del sistema</div>
+        <div class="system-health-sub" id="systemHealthChecked">Pulsa revisar para comprobar versiones y conexión.</div>
+      </div>
+      <div class="system-health-grid" id="systemHealthVersions"></div>
+      <div class="system-health-grid" id="systemHealthLatency"></div>
+      <div class="system-health-actions"><button class="btn-secondary" onclick="refreshSystemHealth_()">Revisar ahora</button></div>
+      <p class="hint" style="margin-top:10px;">Esta revisión es solo para Admin. No modifica datos ni consume recursos de forma continua.</p>
     </div>
 
     <div class="admin-pane" id="tabParticipantes">
@@ -1315,7 +1341,7 @@ const ADMIN_SESSION_ACTIONS_ = new Set([
   'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
   'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','closeSeason','clearSeasonData',
   'archivePolla','desarchivarPolla','editArchivedPremios','getAdminMatchPredictions','getAdminAllPredictions',
-  'getAdminPredictionSummary','setAppConfig'
+  'getAdminPredictionSummary','setAppConfig','getSystemHealth'
 ]);
 function withAdminSession_(obj){
   const out = {...(obj||{})};
@@ -4683,6 +4709,7 @@ function switchAdminTab(tabId){
   document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
   if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
+  if(tabId === 'tabSalud') refreshSystemHealth_();
 }
 
 function renderAdminOverview_(){
@@ -4727,6 +4754,68 @@ function renderAdminOverview_(){
   if(session){
     updateAdminSessionCountdown_();
     ensureAdminSessionCountdown_();
+  }
+}
+
+let systemHealthBusy_ = false;
+function healthCard_(label, value, sub, good=true){
+  return `<div class="system-health-card ${good?'good':'bad'}"><div class="k">${escapeHtml(label)}</div><div class="v">${escapeHtml(String(value ?? '—'))}</div><div class="s">${escapeHtml(sub || '')}</div></div>`;
+}
+async function refreshSystemHealth_(){
+  if(systemHealthBusy_) return;
+  const state=document.getElementById('systemHealthState');
+  const checked=document.getElementById('systemHealthChecked');
+  const versions=document.getElementById('systemHealthVersions');
+  const latency=document.getElementById('systemHealthLatency');
+  if(!state || !checked || !versions || !latency) return;
+  systemHealthBusy_=true;
+  state.textContent='Revisando…';
+  checked.textContent='Comprobando frontend, Service Worker, backend y base de datos.';
+  versions.innerHTML=''; latency.innerHTML='';
+  const started=performance.now();
+  try{
+    const result=await apiGet('getSystemHealth',{},0,true,false);
+    const edgeMs=Math.max(0,Math.round(performance.now()-started));
+    let swVersion='Sin controlador';
+    try{
+      if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+        swVersion=(await getWorkerVersion_(navigator.serviceWorker.controller)) || 'Desconocida';
+      }
+    }catch(_){ swVersion='Desconocida'; }
+
+    if(!result?.ok){
+      state.textContent='⚠️ Revisión incompleta';
+      checked.textContent=result?.error || 'No se pudo comprobar el sistema.';
+      versions.innerHTML=healthCard_('Frontend',APP_VERSION,'Versión cargada',true)+healthCard_('Service Worker',swVersion,'Controlador actual',false);
+      latency.innerHTML=healthCard_('Respuesta API',`${edgeMs} ms`,'Tiempo desde este dispositivo',false);
+      return;
+    }
+
+    const backendVersion=String(result.backendVersion || 'Desconocida');
+    const dbVersion=String(result.dbSchemaVersion || 'Desconocida');
+    const frontOk=APP_VERSION===backendVersion;
+    const swOk=swVersion===APP_VERSION;
+    const dbOk=!!result.dbOk && dbVersion===APP_VERSION;
+    const allOk=frontOk && swOk && dbOk;
+    state.textContent=allOk ? '✅ Sistema sincronizado' : '⚠️ Revisar versiones';
+    checked.textContent=`Última revisión: ${new Date().toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+    versions.innerHTML=
+      healthCard_('Frontend',APP_VERSION,frontOk?'Coincide':'No coincide',frontOk)+
+      healthCard_('Service Worker',swVersion,swOk?'Coincide':'No coincide',swOk)+
+      healthCard_('Backend',backendVersion,frontOk?'Coincide':'No coincide',frontOk)+
+      healthCard_('Base de datos',dbVersion,dbOk?'Esquema correcto':'Revisar SQL',dbOk);
+    const edgeGood=edgeMs<1500;
+    const dbMs=Number(result.dbLatencyMs ?? 0);
+    latency.innerHTML=
+      healthCard_('Respuesta API',`${edgeMs} ms`,edgeGood?'Normal':'Más lenta de lo esperado',edgeGood)+
+      healthCard_('Consulta DB',`${dbMs} ms`,dbMs<800?'Normal':'Más lenta de lo esperado',dbMs<800)+
+      healthCard_('Base de datos',result.dbOk?'Conectada':'Error',result.dbOk?'Lectura correcta':'No respondió',!!result.dbOk)+
+      healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime);
+  }catch(err){
+    state.textContent='⚠️ Sin respuesta';
+    checked.textContent='No se pudo completar la revisión.';
+  }finally{
+    systemHealthBusy_=false;
   }
 }
 
@@ -5738,7 +5827,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D5';
+const APP_VERSION = 'V25E1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
