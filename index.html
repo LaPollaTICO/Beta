@@ -5814,9 +5814,10 @@ async function compactPollaV2_(){
   const status=document.getElementById('compactionRunStatus');
   if(badge){badge.textContent='✓ Compactada';badge.className='secure-backup-badge ok';badge.style.color='#111';}
   if(status){status.className='compaction-ready';status.textContent=`Compactación completada. ${Number(result.matchesRemoved)||0} partidos y ${Number(result.predictionsRemoved)||0} pronósticos salieron de las tablas operativas; el histórico protegido permanece disponible.`;}
+  invalidateStandingsCaches_();
   allPollas=await apiGet('getPollas').catch(()=>allPollas);
   const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
-  alert('✅ Compactación V2 completada dentro de una transacción. El histórico protegido y el respaldo seguro se conservaron.');
+  alert('✅ Compactación V2 completada dentro de una transacción. El histórico, el respaldo seguro y la acumulada anual quedaron conservados.');
 }
 
 async function createSecurePollaBackup_(){
@@ -6277,7 +6278,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25F4.2';
+const APP_VERSION = 'V25F4.3';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
