@@ -5353,7 +5353,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D2.1';
+const APP_VERSION = 'V25D2.2';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
@@ -5457,20 +5457,63 @@ if('serviceWorker' in navigator){
         });
       });
 
-      // Comprobación inmediata y también mientras la app permanece abierta.
-      // Así una versión publicada después de abrir la PWA puede aparecer sin refresh.
-      reg.update().catch(()=>{});
-      let lastSwUpdateCheck_ = Date.now();
-      const checkForAppUpdate_ = () => {
-        lastSwUpdateCheck_ = Date.now();
-        reg.update().then(()=>offerWaitingWorker_(reg)).catch(()=>{});
-      };
-      setInterval(checkForAppUpdate_, 5 * 60 * 1000);
-      document.addEventListener('visibilitychange', () => {
-        if(document.visibilityState === 'visible' && Date.now() - lastSwUpdateCheck_ > 60 * 1000){
-          checkForAppUpdate_();
+      // D2.2: además de registration.update(), consultamos sw.js con cache-bust.
+      // GitHub Pages/CDN puede tardar en refrescar la copia usada por el registro;
+      // esta sonda permite detectar una versión nueva sin obligar al usuario a refrescar.
+      async function probeLatestServiceWorker_(){
+        try{
+          const probeUrl = `sw.js?update-check=${Date.now()}`;
+          const probeRes = await fetch(probeUrl, {cache:'no-store', credentials:'same-origin'});
+          if(!probeRes.ok) return;
+          const source = await probeRes.text();
+          const match = source.match(/const\s+SW_VERSION\s*=\s*['"]([^'"]+)['"]/);
+          const latestVersion = match?.[1] || '';
+          if(!latestVersion) return;
+
+          const controllerVersion = await getWorkerVersion_(navigator.serviceWorker.controller);
+          if(controllerVersion && latestVersion === controllerVersion){
+            await offerWaitingWorker_(appUpdateRegistration);
+            return;
+          }
+
+          // Solo cambiamos la URL del script cuando realmente detectamos otra versión.
+          // Así evitamos instalar un worker falso en cada comprobación.
+          const freshReg = await navigator.serviceWorker.register(
+            `sw.js?v=${encodeURIComponent(latestVersion)}`,
+            {scope:'./', updateViaCache:'none'}
+          );
+          appUpdateRegistration = freshReg;
+
+          const installing = freshReg.installing;
+          if(installing){
+            installing.addEventListener('statechange', () => {
+              if(installing.state === 'installed') void offerWaitingWorker_(freshReg);
+            }, {once:false});
+          }
+          await offerWaitingWorker_(freshReg);
+        }catch(err){
+          console.debug('Comprobación de actualización omitida:', err);
         }
+      }
+
+      reg.update().catch(()=>{});
+      let lastSwUpdateCheck_ = 0;
+      const checkForAppUpdate_ = async () => {
+        // Evita comprobaciones duplicadas por online/visibility en el mismo instante.
+        if(Date.now() - lastSwUpdateCheck_ < 15000) return;
+        lastSwUpdateCheck_ = Date.now();
+        try{ await reg.update(); }catch(_){}
+        await offerWaitingWorker_(appUpdateRegistration || reg);
+        await probeLatestServiceWorker_();
+      };
+
+      // Una primera comprobación poco después de abrir y luego periódicamente.
+      setTimeout(checkForAppUpdate_, 12000);
+      setInterval(checkForAppUpdate_, 2 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible') checkForAppUpdate_();
       });
+      window.addEventListener('focus', checkForAppUpdate_);
       window.addEventListener('online', checkForAppUpdate_);
 
       navigator.serviceWorker.addEventListener('controllerchange', () => {
