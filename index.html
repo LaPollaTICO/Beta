@@ -1216,7 +1216,7 @@ function hasValidAdminSession_(){
 function withAdminSession_(obj){
   const out = {...(obj||{})};
   const action = String(out.action || '');
-  if(action !== 'authAdmin' && hasValidAdminSession_()) delete out.pin;
+  if(action !== 'authAdmin' && action !== 'authAdminConfirm' && hasValidAdminSession_()) delete out.pin;
   return out;
 }
 // Nombre de quien está administrando en esta sesión (se pregunta una vez al
@@ -5353,7 +5353,7 @@ async function exportAllCSV(adminMode=false){
 initLanding();
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
-const APP_VERSION = 'V25D2';
+const APP_VERSION = 'V25D2.1';
 let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
@@ -5457,9 +5457,21 @@ if('serviceWorker' in navigator){
         });
       });
 
-      // Una sola comprobación explícita al abrir. El registro ya hace su chequeo
-      // normal; el handshake de versión impide ofrecer dos veces el mismo worker.
+      // Comprobación inmediata y también mientras la app permanece abierta.
+      // Así una versión publicada después de abrir la PWA puede aparecer sin refresh.
       reg.update().catch(()=>{});
+      let lastSwUpdateCheck_ = Date.now();
+      const checkForAppUpdate_ = () => {
+        lastSwUpdateCheck_ = Date.now();
+        reg.update().then(()=>offerWaitingWorker_(reg)).catch(()=>{});
+      };
+      setInterval(checkForAppUpdate_, 5 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible' && Date.now() - lastSwUpdateCheck_ > 60 * 1000){
+          checkForAppUpdate_();
+        }
+      });
+      window.addEventListener('online', checkForAppUpdate_);
 
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if(!appUpdateApplying || appUpdateReloaded_) return;
