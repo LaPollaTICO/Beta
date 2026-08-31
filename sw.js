@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V25H4.2.
+// Service Worker de La Polla TICO — V25H4.3.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h42';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h42';
+const SHELL_CACHE = 'polla-tico-shell-v25h43';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h43';
 
 const SHELL_FILES = [
   './',
@@ -37,7 +37,7 @@ self.addEventListener('install', (event) => {
   // V25B1.1: NO skipWaiting automático. Esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H4.2';
+const SW_VERSION = 'V25H4.3';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){
@@ -67,23 +67,21 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navegación: red primero y caché como respaldo. Esto evita que, justo
-  // después de activar una versión nueva, el navegador recargue un index.html
-  // anterior y vuelva a ofrecer la misma actualización por segunda vez.
+  // H4.3 — Navegación cache-first. La app ya tiene un flujo explícito de
+  // actualización de Service Worker; por eso no hace falta esperar a la red en
+  // cada apertura. El shell actual abre inmediatamente y la nueva versión solo
+  // toma control cuando el usuario confirma "Actualizar".
   if (event.request.mode === 'navigate' || url.pathname.endsWith('/index.html')) {
     event.respondWith((async()=>{
       const cache = await caches.open(SHELL_CACHE);
+      const cached = await cache.match('./index.html') || await cache.match(event.request);
+      if(cached) return cached;
       try{
         const preload = event.preloadResponse ? await event.preloadResponse : null;
         const fresh = preload || await fetch(event.request, {cache:'no-cache'});
-        if(fresh && fresh.ok){
-          await cache.put('./index.html', fresh.clone());
-          return fresh;
-        }
+        if(fresh && fresh.ok){ await cache.put('./index.html', fresh.clone()); return fresh; }
       }catch(_){}
-
-      const cached = await cache.match(event.request) || await cache.match('./index.html');
-      return cached || new Response('Sin conexión', {status:503, headers:{'Content-Type':'text/plain; charset=utf-8'}});
+      return new Response('Sin conexión', {status:503, headers:{'Content-Type':'text/plain; charset=utf-8'}});
     })());
     return;
   }

@@ -18,10 +18,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=V25H4.2">
-<script src="./app-core.js?v=V25H4.2" defer></script>
-<script src="./app-main.js?v=V25H4.2" defer></script>
-<script src="./app-pwa.js?v=V25H4.2" defer></script>
+<link rel="stylesheet" href="./styles.css?v=V25H4.3">
+<script src="./app-core.js?v=V25H4.3" defer></script>
+<script src="./app-main.js?v=V25H4.3" defer></script>
+<script src="./app-pwa.js?v=V25H4.3" defer></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -273,6 +273,17 @@
   </div>
 </div>
 
+<!-- ======= GESTIÓN DE CÓDIGOS DE ACTIVACIÓN ======= -->
+<div class="overlay" id="activationManagerOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="closeOverlay('activationManagerOverlay')">✕</button>
+    <div class="modal-icon">🔐</div><h2>Gestionar códigos de activación</h2>
+    <p class="hint">Consulta los códigos pendientes de esta Polla sin tener que regenerarlos. Cada código sigue siendo de un solo uso y desaparece al activar la cuenta.</p>
+    <input id="activationManagerSearch" type="text" placeholder="Buscar jugador..." oninput="renderActivationManager_()">
+    <div id="activationManagerList" style="margin-top:10px;"></div>
+  </div>
+</div>
+
 <!-- ======= CENTRO DE COMUNICADOS ======= -->
 <div class="overlay" id="communicationsOverlay">
   <div class="modal">
@@ -485,6 +496,11 @@
       </div>
       <h3>Participantes activos</h3>
       <div id="participantsList"></div>
+      <div class="pozo-box" style="margin-top:14px;">
+        <b>🔐 Códigos de activación</b>
+        <p class="hint" style="margin:7px 0 10px;">Consulta y copia los códigos pendientes de esta Polla. Siguen siendo de un solo uso.</p>
+        <button class="btn-secondary" style="border-color:rgba(255,255,255,.75);" onclick="openActivationManager_()">Gestionar códigos</button>
+      </div>
       <div class="pozo-box" style="margin-top:14px;">
         <b>🗂️ Gestión histórica de jugadores</b>
         <p class="hint" style="margin:7px 0 10px;">Administra una identidad global aunque ya no participe en esta Polla. Las eliminaciones históricas no recalculan campeones.</p>

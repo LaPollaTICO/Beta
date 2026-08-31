@@ -68,6 +68,7 @@ let pendingAccessName = '';
 let pendingAccessState = null;
 let pendingIdentityName = '';
 let lastActivationCodes = [];
+let activationManagerRows_ = [];
 let collapsedAdminGroups = new Set();
 // PIN de admin verificado por la Edge Function en authAdmin. Se guarda en memoria
 // (nunca en localStorage) y se reenvía en cada acción de admin, porque el
@@ -91,7 +92,7 @@ function hasValidAdminSession_(){
 const ADMIN_SESSION_ACTIONS_ = new Set([
   'addPolla','editPolla','deletePolla','addMatch','editMatch','deleteMatch','cancelAndReplaceMatch',
   'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion','getHistoricalPlayersAdmin','previewHistoricalPlayerDeletion','deleteHistoricalPlayer',
-  'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
+  'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin','getActivationCodesAdmin',
   'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
   'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
   'getStorageCleanupStatus','cleanupCompactedPollaStorage','getFinalArchiveAuditStatus','runFinalArchiveAudit','closeSeason','clearSeasonData',
@@ -112,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4.2';
+const APP_VERSION = 'V25H4.3';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1433,6 +1434,7 @@ async function initLanding(){
     allPollasScope_ = 'landing';
     landingLoadFailed_ = false;
     renderLanding();
+    prefetchActivePollaMatches_();
 
     if(landingTimer) clearInterval(landingTimer);
     landingTimer = setInterval(updateLandingCountdowns, 30000);
@@ -1472,6 +1474,20 @@ function updateLandingCountdowns(){
     el.textContent = sl.text;
     el.classList.toggle('soon', sl.soon);
   });
+}
+function prefetchActivePollaMatches_(){
+  const active=(allPollas||[]).filter(p=>p.status==='actual' && Number(p.matchCount||0)>0).slice(0,2);
+  if(!active.length) return;
+  const run=()=>active.forEach(p=>{
+    const key=String(p.id||'');
+    const cached=matchesCacheByPolla_.get(key);
+    if(cached && (Date.now()-Number(cached.at||0))<CACHE_TTL_MATCHES_MS) return;
+    apiGet('getMatches',{pollaId:p.id},0,true,true).then(rows=>{
+      if(Array.isArray(rows)) matchesCacheByPolla_.set(key,{data:rows,at:Date.now()});
+    }).catch(()=>{});
+  });
+  if('requestIdleCallback' in window) requestIdleCallback(run,{timeout:1200});
+  else setTimeout(run,500);
 }
 function renderLanding(){
   const container = document.getElementById('pollasContainer');
@@ -3146,7 +3162,22 @@ function clearNewPollaForm(){
 // cerrado cuando ya se está mostrando (clic para volver a ocultarla).
 const EYE_OPEN_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_CLOSED_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4 5 10 5c1.2 0 2.3-.2 3.3-.5M22 12s-1.6 2-4.2 3.5M12 17v3M6 15.5L4 18M18 15.5l2 2.5"/></svg>';
+let adminGateDestination_ = 'pollas';
+function prepareAdminGate_(destination='pollas'){
+  adminGateDestination_ = destination;
+  const input = document.getElementById('gatePinInput');
+  input.value='';
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  input.dataset.ticoMasked = '1';
+  if(canMaskText){ input.type='text'; input.style.webkitTextSecurity='disc'; }
+  else { input.type='password'; }
+  document.getElementById('gatePinToggle').innerHTML = EYE_OPEN_SVG;
+  openOverlay('adminGateOverlay');
+  setTimeout(()=>input.focus(),50);
+}
+
 async function openAdminGate(){
+  adminGateDestination_ = 'pollas';
   if(hasValidAdminSession_()){
     if(!adminName) adminName = askAdminName_();
     if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
@@ -3159,18 +3190,7 @@ async function openAdminGate(){
     openOverlay('pollasAdminOverlay');
     return;
   }
-  const input = document.getElementById('gatePinInput');
-  input.value='';
-  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
-  input.dataset.ticoMasked = '1';
-  if(canMaskText){
-    input.type = 'text';
-    input.style.webkitTextSecurity = 'disc';
-  } else {
-    input.type = 'password';
-  }
-  document.getElementById('gatePinToggle').innerHTML = EYE_OPEN_SVG;
-  openOverlay('adminGateOverlay');
+  prepareAdminGate_('pollas');
 }
 function toggleGatePinVisibility(){
   const input = document.getElementById('gatePinInput');
@@ -3206,6 +3226,10 @@ async function checkGatePin(){
     }
     adminName = askAdminName_();
     closeOverlay('adminGateOverlay');
+    if(adminGateDestination_ === 'polla'){
+      await openCurrentPollaAdminAfterAuth_();
+      return;
+    }
     // OPT V15: si la lista de Pollas se cargó hace segundos en el landing, no
     // la pedimos otra vez solo por abrir Admin. Si ya envejeció, sí se refresca.
     if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
@@ -3387,8 +3411,10 @@ async function addPolla(){
   if(!result.ok){ alert(result.error || 'No se pudo crear.'); return; }
   clearNewPollaForm();
   allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+  allPollasLoadedAt_ = Date.now(); allPollasScope_ = 'admin';
   renderPollasAdminList();
   renderLanding();
+  showToast_(`✅ Polla #${number} creada correctamente`);
 }
 function renderPollasAdminList(){
   const list = document.getElementById('pollasAdminList');
@@ -3475,7 +3501,7 @@ async function savePollaEdit(id){
     updateWinnersButtonVisibility();
   }
   renderPollasAdminList(); renderLanding();
-  alert('✅ Polla actualizada.');
+  showToast_(`✅ Polla #${number} actualizada correctamente`);
 }
 async function setPollaStatus(id,status){
   if(status==='finalizada'){
@@ -3508,29 +3534,12 @@ function clearNewMatchForm(){
   ['newMatchNumber','newHome','newAway','newImage','newClose'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('newIsStar').checked = false;
 }
-async function openAdmin(){
-  // D1.1: si ya existe una sesión Admin válida, reutilizarla también al abrir
-  // el panel interno de una Polla. Antes este camino seguía pidiendo la clave
-  // siempre, aunque openAdminGate() ya hubiera creado una sesión temporal.
-  if(!hasValidAdminSession_()){
-    const pin = prompt('Clave de administrador:');
-    if(pin === null) return;
-    const result = await apiPost({action:'authAdmin', pin});
-    if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
-    adminPin = pin;
-    adminSessionToken = result.adminSession || null;
-    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
-    if(adminSessionToken){
-      sessionStorage.setItem('tico:adminSession', adminSessionToken);
-      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
-    }
-  }
-
+async function openCurrentPollaAdminAfterAuth_(){
   if(!adminName) adminName = askAdminName_();
   switchAdminTab('tabResumen');
   renderAdminOverview_();
-  renderParticipantsList();
-  // Mismo comportamiento que la vista del jugador: HOY abierto; cualquier otro día recogido.
+  // No bloqueamos la apertura del panel esperando participantes: se cargan en paralelo.
+  void renderParticipantsList();
   collapsedAdminGroups = computeDefaultCollapsedGroups();
   renderAdminMatchList();
   document.getElementById('premio1Input').value = currentPolla.premio1 || '';
@@ -3539,6 +3548,15 @@ async function openAdmin(){
   document.getElementById('showWinnersLiveToggle').checked = !!currentPolla.showWinnersLive;
   applyArchivedAdminLock_();
   openOverlay('adminOverlay');
+}
+async function openAdmin(){
+  // H4.3: el acceso desde dentro de una Polla usa exactamente el mismo modal
+  // que el acceso Admin de Inicio (ojo mostrar/ocultar, mensajes y rate-limit).
+  if(!hasValidAdminSession_()){
+    prepareAdminGate_('polla');
+    return;
+  }
+  await openCurrentPollaAdminAfterAuth_();
 }
 // 🔒 Si la Polla está archivada, el panel de admin queda en modo solo-lectura:
 // se puede seguir viendo todo (tabla, partidos, participantes, premios), pero
@@ -4051,6 +4069,46 @@ function showActivationCodes(codes){
 async function copyActivationCode(i){const x=lastActivationCodes[i];if(x){await copyTextSafe(x.code);alert('✅ Código copiado.');}}
 async function copyActivationMessage(i){const x=lastActivationCodes[i];if(x){await copyTextSafe(activationMessage(x.name,x.code));alert('✅ Mensaje copiado.');}}
 async function copyAllActivationMessages(){if(!lastActivationCodes.length)return;await copyTextSafe(lastActivationCodes.map(x=>activationMessage(x.name,x.code)).join('\n\n──────────\n\n'));alert('✅ Mensajes copiados.');}
+
+async function openActivationManager_(){
+  if(!currentPolla) return;
+  openOverlay('activationManagerOverlay');
+  const list=document.getElementById('activationManagerList');
+  list.innerHTML='<p class="hint">Cargando códigos pendientes...</p>';
+  const r=await apiPost({action:'getActivationCodesAdmin',pollaId:currentPolla.id,pin:adminPin,adminName:adminName},2,true).catch(()=>null);
+  if(!r?.ok){ list.innerHTML='<p class="hint">No se pudieron cargar los códigos. Reintenta.</p>'; return; }
+  activationManagerRows_=Array.isArray(r.items)?r.items:[];
+  document.getElementById('activationManagerSearch').value='';
+  renderActivationManager_();
+}
+function renderActivationManager_(){
+  const box=document.getElementById('activationManagerList'); if(!box)return;
+  const q=normalizeName(document.getElementById('activationManagerSearch')?.value||'');
+  const rows=activationManagerRows_.filter(x=>!q||normalizeName(x.name).includes(q));
+  if(!rows.length){ box.innerHTML='<p class="hint">No hay jugadores pendientes de activación en esta Polla.</p>'; return; }
+  box.innerHTML=rows.map((x,i)=>{
+    const code=x.code||'';
+    const codeHtml=code?`<code class="activation-code-value">${escapeHtml(code)}</code>`:'<span class="hint">Código anterior no recuperable. Genera uno nuevo una sola vez.</span>';
+    return `<div class="list-item"><div class="top-row"><div class="info"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.purposeLabel||'Pendiente de activación')}</small>${codeHtml}</div></div><div class="btn-row" style="margin-top:8px;">${code?`<button class="btn-secondary" onclick="copyManagedActivationCode_(${i})">📋 Copiar código</button><button class="btn-secondary" onclick="copyManagedActivationMessage_(${i})">📨 Copiar mensaje</button>`:''}<button class="btn-secondary" onclick="regenerateManagedActivation_(${i})">🔄 ${code?'Regenerar':'Generar código'}</button></div></div>`;
+  }).join('');
+}
+async function copyManagedActivationCode_(i){
+  const x=activationManagerRows_[i]; if(!x?.code)return;
+  await copyTextSafe(x.code); showToast_('✅ Código copiado');
+}
+async function copyManagedActivationMessage_(i){
+  const x=activationManagerRows_[i]; if(!x?.code)return;
+  await copyTextSafe(activationMessage(x.name,x.code)); showToast_('✅ Mensaje copiado');
+}
+async function regenerateManagedActivation_(i){
+  const x=activationManagerRows_[i]; if(!x)return;
+  if(x.code && !confirm(`¿Regenerar el código de ${x.name}?\n\nEl código anterior dejará de funcionar inmediatamente.`)) return;
+  const result=await apiPost({action:'regenerateActivationCode',pollaId:currentPolla.id,name:x.name,pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo generar el código.');return;}
+  x.code=result.activationCode||'';
+  renderActivationManager_();
+  showToast_('✅ Código de activación actualizado');
+}
 
 async function resetParticipantPin(name){
   if(!confirm(`¿Restablecer el PIN de ${name}?\n\nSu PIN actual dejará de funcionar. Sus puntos, pronósticos, participaciones y referidos se conservan.`))return;
