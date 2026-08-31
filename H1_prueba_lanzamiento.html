@@ -14,7 +14,7 @@
 </head>
 <body><div class="wrap">
   <div class="card">
-    <h1>LaPollaTICO · H1</h1>
+    <h1>LaPollaTICO · H1.2</h1>
     <div class="muted">Prueba de latencia y concurrencia <b>solo lectura</b>. No registra jugadores, no guarda pronósticos y no modifica datos.</div>
   </div>
   <div class="card">
@@ -42,7 +42,7 @@
 </div>
 <script>
 const URL='https://iiuppczbeezwxevlnahk.supabase.co/functions/v1/polla-api';
-const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1cHBjemJlZXp3eGV2bG5haGsiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NzYyNjQyMywiZXhwIjoyMTAzMjAyNDIzfQ.Q6M-p1IUXCw3zPGGsR-BYiRen5oQWeLMfpzuf382mS0';
+const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpdXBwY3piZWV6d3hldmxuYWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2MjY0MjMsImV4cCI6MjEwMzIwMjQyM30.Q6M-p1IUXCw3zPGGsR-BYiRen5oQWeLMfpzuf382mS0';
 const ACTIONS=[
  ['getAppConfig',{}],
  ['getPollas',{scope:'landing'}],
@@ -52,12 +52,12 @@ const ACTIONS=[
 ];
 const $=id=>document.getElementById(id); const log=s=>{$('log').textContent += '\n'+s; $('log').scrollTop=$('log').scrollHeight};
 function pct(a,p){if(!a.length)return 0; const s=[...a].sort((x,y)=>x-y); return s[Math.min(s.length-1,Math.ceil((p/100)*s.length)-1)]}
-async function one(action,params){const q=new URLSearchParams({action,...params}); const t=performance.now(); try{const r=await fetch(`${URL}?${q}`,{headers:{apikey:KEY,Authorization:`Bearer ${KEY}`},cache:'no-store'}); const ms=Math.round(performance.now()-t); let body=null; try{body=await r.json()}catch{} return {action,ok:r.ok && !(body&&body.ok===false),status:r.status,ms,body};}catch(e){return {action,ok:false,status:0,ms:Math.round(performance.now()-t),error:String(e)}}}
+async function one(action,params){const q=new URLSearchParams({action,...params}); const t=performance.now(); try{const r=await fetch(`${URL}?${q}`,{headers:{apikey:KEY,Authorization:`Bearer ${KEY}`},cache:'no-store'}); const ms=Math.round(performance.now()-t); let body=null; try{body=await r.json()}catch{} return {action,ok:r.ok && !(body&&body.ok===false),status:r.status,ms,body,errorDetail:(!r.ok?(body?.msg||body?.message||body?.error||''): '')};}catch(e){return {action,ok:false,status:0,ms:Math.round(performance.now()-t),error:String(e)}}}
 async function run(){
  $('run').disabled=true; $('log').textContent='Iniciando H1…'; const conc=+$('conc').value, rounds=+$('rounds').value; const all=[];
  // warm-up
  log('Calentamiento…'); for(const [a,p] of ACTIONS){const r=await one(a,p); log(`${a}: ${r.status} · ${r.ms} ms`)}
- log(`\nCarga: ${conc} concurrentes × ${rounds} rondas × ${ACTIONS.length} acciones`);
+ log(`\nCarga: ${conc} solicitudes simultáneas × ${rounds} rondas = ${conc*rounds} solicitudes totales`);
  for(let round=1;round<=rounds;round++){
    const jobs=[]; for(let i=0;i<conc;i++){const [a,p]=ACTIONS[(i+round-1)%ACTIONS.length]; jobs.push(one(a,p));}
    const res=await Promise.all(jobs); all.push(...res); log(`Ronda ${round}: ${res.filter(x=>x.ok).length}/${res.length} correctas`);
@@ -69,7 +69,7 @@ async function run(){
  const groups={}; for(const r of all){(groups[r.action]??=[]).push(r)}
  let html='<table><tr><th>Acción</th><th>OK</th><th>Errores</th><th>P50</th><th>P95</th><th>Máx.</th></tr>';
  for(const [a,rs] of Object.entries(groups)){const g=rs.filter(x=>x.ok),t=g.map(x=>x.ms);html+=`<tr><td><code>${a}</code></td><td>${g.length}/${rs.length}</td><td>${rs.length-g.length}</td><td>${pct(t,50)} ms</td><td>${pct(t,95)} ms</td><td>${t.length?Math.max(...t):'—'} ms</td></tr>`} html+='</table>';
- $('table').innerHTML=html; if(bad.length){log('\nErrores:'); bad.slice(0,20).forEach(x=>log(`${x.action}: HTTP ${x.status} · ${x.ms} ms${x.error?' · '+x.error:''}`))}
+ $('table').innerHTML=html; if(bad.length){log('\nErrores:'); bad.slice(0,20).forEach(x=>log(`${x.action}: HTTP ${x.status} · ${x.ms} ms${x.error?' · '+x.error:''}${x.errorDetail?' · '+x.errorDetail:''}`))}
  log(`\nResultado: ${verdict} · P50 ${p50} ms · P95 ${p95} ms · errores ${(errRate*100).toFixed(1)}%`); $('run').disabled=false;
 }
 $('run').addEventListener('click',run);
