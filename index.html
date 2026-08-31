@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=V25H4">
+<link rel="stylesheet" href="./styles.css?v=V25H4.1">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -152,6 +152,9 @@
       <label>Nombre</label><input id="registerNameInput" autocomplete="off">
       <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <div id="registerReferralWrap"><label>Código de invitación (opcional)</label><input id="registerReferralInput" autocomplete="off" placeholder="TICOXXXX"></div>
+      <label>WhatsApp / teléfono (opcional)</label>
+      <input id="registerWhatsappInput" type="tel" inputmode="tel" autocomplete="tel" placeholder="+51 999 999 999">
+      <div class="hint" style="margin-top:-5px;margin-bottom:10px;">Opcional · solo lo verá el administrador. Puedes usar un número de cualquier país.</div>
       <button class="btn-primary" onclick="submitNewRegistration()">Registrarme</button>
     </div>
 
@@ -856,7 +859,7 @@
   </div>
 </div>
 
-<script src="./app-core.js?v=V25H4"></script>
+<script src="./app-core.js?v=V25H4.1"></script>
 <script>
 // ============ BACKEND SUPABASE ============
 // El navegador SOLO llama a la Edge Function con la anon key pública.
@@ -972,7 +975,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4';
+const APP_VERSION = 'V25H4.1';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -2775,6 +2778,7 @@ async function checkName(){
       document.getElementById('playerAccessHint').textContent='No tienes una cuenta con este nombre. Puedes registrarte ahora.';
       document.getElementById('registerNameInput').value=name; document.getElementById('registerPinInput').value='';
       document.getElementById('registerReferralInput').value=incomingRefCode||'';
+      document.getElementById('registerWhatsappInput').value='';
       document.getElementById('registerReferralWrap').style.display=currentPolla?.isFreePolla?'none':'';
       showAccessMode('REGISTER');
     }
@@ -2823,9 +2827,15 @@ async function submitNewRegistration(){
   const name=document.getElementById('registerNameInput').value.trim();
   const pin=document.getElementById('registerPinInput').value.trim();
   const ref=currentPolla?.isFreePolla?'':document.getElementById('registerReferralInput').value.trim().toUpperCase();
+  const whatsapp=document.getElementById('registerWhatsappInput').value.trim();
   if(!name){accessError('Escribe el nombre con el que quieres participar.');return;}
   if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
-  const result=await apiPost({action:'selfRegister',pollaId:currentPolla.id,name,pin,referredByCode:ref});
+  const whatsappDigits=whatsapp.replace(/\D/g,'');
+  if(whatsapp && (whatsappDigits.length<7 || whatsappDigits.length>15)){
+    accessError('Ingresa un WhatsApp/teléfono válido o déjalo vacío.');
+    return;
+  }
+  const result=await apiPost({action:'selfRegister',pollaId:currentPolla.id,name,pin,referredByCode:ref,whatsapp});
   if(!result.ok){
     const msgs={DUPLICATE_NAME:'Ese nombre ya está ocupado. Usa otro nombre o apodo.',CODIGO_INVALIDO:'El código de invitación no existe.',NEEDS_ACTIVATION:'Ese nombre ya fue reservado por el Admin. Usa su código de activación.',WRONG_PIN:'Ese nombre ya pertenece a otro jugador. Usa otro nombre.'};
     accessError(msgs[result.error]||result.error||'No se pudo completar el registro.'); return;
@@ -6071,6 +6081,6 @@ initLanding();
 /* PWA/actualizaciones modularizadas en app-pwa.js. */
 
 </script>
-<script src="./app-pwa.js?v=V25H4"></script>
+<script src="./app-pwa.js?v=V25H4.1"></script>
 </body>
 </html>

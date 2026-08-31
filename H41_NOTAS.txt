@@ -1,0 +1,29 @@
+LaPollaTICO V25H4.1 — WhatsApp/teléfono opcional al registrarse
+
+OBJETIVO
+- Agrega el campo "WhatsApp / teléfono (opcional)" a la primera pantalla de inscripción.
+- No crea pantallas nuevas.
+- No cambia el diseño general ni el flujo de palabra secreta.
+- Acepta números de cualquier país (7 a 15 dígitos, con + opcional).
+- Si queda vacío, el registro continúa normalmente.
+- El número sigue siendo editable/eliminable desde Configuración.
+- Solo Admin recibe el número en getParticipantsAdmin; la ruta pública getParticipants sigue mostrando únicamente nombres.
+
+ORDEN DE INSTALACIÓN EN BETA
+1) Ejecutar V25H41_whatsapp_registro.sql
+2) Desplegar polla-api-index-v25h41.ts
+3) Subir index.html
+4) Subir app-core.js
+5) Subir app-pwa.js
+6) Subir sw.js
+styles.css no cambia funcionalmente, pero se incluye en el paquete para mantener el conjunto completo.
+
+SALUD
+Frontend, Backend, Base de datos y Service Worker deben mostrar V25H4.1.
+
+PRUEBA CORTA
+A) Crear jugador nuevo dejando teléfono vacío -> debe registrarse.
+B) Crear otro jugador nuevo con +51 999 999 999 -> debe registrarse.
+C) Entrar a Configuración y comprobar que el teléfono está cargado y se puede cambiar/eliminar.
+D) Admin > Participantes debe mostrar el botón de WhatsApp solo para quien tenga número.
+E) La palabra secreta debe seguir apareciendo después del registro exactamente como antes.
