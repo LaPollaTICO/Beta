@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>LaPollaTICO · Prueba H1</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#f5f5f5;margin:0;padding:24px}
+  .wrap{max-width:900px;margin:auto}.card{background:#151b23;border:1px solid #3a404a;border-radius:16px;padding:18px;margin-bottom:16px}
+  h1{margin:0 0 8px;font-size:28px} h2{font-size:18px;margin:0 0 10px}.muted{color:#aeb6c2}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  button,select,input{font:inherit;border-radius:10px;border:1px solid #e6e6e6;background:#111820;color:white;padding:10px 12px}button{cursor:pointer;font-weight:700}
+  button:disabled{opacity:.5;cursor:not-allowed}.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-top:14px}.box{background:#0e141b;border:1px solid #2d3540;border-radius:12px;padding:12px}.big{font-size:24px;font-weight:800}.ok{color:#6fe08b}.warn{color:#ffd166}.bad{color:#ff7b7b}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:9px;border-bottom:1px solid #2d3540;font-size:13px}code{color:#f4d35e}.small{font-size:12px}.log{white-space:pre-wrap;background:#090d12;border:1px solid #2b313b;padding:12px;border-radius:10px;max-height:280px;overflow:auto}
+</style>
+</head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>LaPollaTICO · H1</h1>
+    <div class="muted">Prueba de latencia y concurrencia <b>solo lectura</b>. No registra jugadores, no guarda pronósticos y no modifica datos.</div>
+  </div>
+  <div class="card">
+    <h2>Configuración</h2>
+    <div class="row">
+      <label>Concurrencia <select id="conc"><option>5</option><option selected>10</option><option>25</option><option>50</option></select></label>
+      <label>Rondas <select id="rounds"><option>2</option><option selected>3</option><option>5</option></select></label>
+      <button id="run">▶ Ejecutar H1</button>
+    </div>
+    <div class="small muted" style="margin-top:10px">Primero usa 10 × 3. Si queda estable, repite 25 × 3. No empieces con 50.</div>
+  </div>
+  <div class="card">
+    <h2>Resultado global</h2>
+    <div class="kpi">
+      <div class="box"><div class="muted small">Solicitudes</div><div class="big" id="total">—</div></div>
+      <div class="box"><div class="muted small">Correctas</div><div class="big" id="ok">—</div></div>
+      <div class="box"><div class="muted small">Errores</div><div class="big" id="err">—</div></div>
+      <div class="box"><div class="muted small">Mediana</div><div class="big" id="p50">—</div></div>
+      <div class="box"><div class="muted small">P95</div><div class="big" id="p95">—</div></div>
+      <div class="box"><div class="muted small">Veredicto</div><div class="big" id="verdict">—</div></div>
+    </div>
+  </div>
+  <div class="card"><h2>Por acción</h2><div id="table">Aún sin ejecutar.</div></div>
+  <div class="card"><h2>Registro</h2><div class="log" id="log">Listo.</div></div>
+</div>
+<script>
+const URL='https://iiuppczbeezwxevlnahk.supabase.co/functions/v1/polla-api';
+const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1cHBjemJlZXp3eGV2bG5haGsiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NzYyNjQyMywiZXhwIjoyMTAzMjAyNDIzfQ.Q6M-p1IUXCw3PGGsR-BYiRen5oQWeLMfpzuf382mS0';
+const ACTIONS=[
+ ['getAppConfig',{}],
+ ['getPollas',{scope:'landing'}],
+ ['getArchivedPollas',{limit:'10',offset:'0'}],
+ ['getYearlyStandings',{}],
+ ['getFreeContestStats',{}]
+];
+const $=id=>document.getElementById(id); const log=s=>{$('log').textContent += '\n'+s; $('log').scrollTop=$('log').scrollHeight};
+function pct(a,p){if(!a.length)return 0; const s=[...a].sort((x,y)=>x-y); return s[Math.min(s.length-1,Math.ceil((p/100)*s.length)-1)]}
+async function one(action,params){const q=new URLSearchParams({action,...params}); const t=performance.now(); try{const r=await fetch(`${URL}?${q}`,{headers:{apikey:KEY,Authorization:`Bearer ${KEY}`},cache:'no-store'}); const ms=Math.round(performance.now()-t); let body=null; try{body=await r.json()}catch{} return {action,ok:r.ok && !(body&&body.ok===false),status:r.status,ms,body};}catch(e){return {action,ok:false,status:0,ms:Math.round(performance.now()-t),error:String(e)}}}
+async function run(){
+ $('run').disabled=true; $('log').textContent='Iniciando H1…'; const conc=+$('conc').value, rounds=+$('rounds').value; const all=[];
+ // warm-up
+ log('Calentamiento…'); for(const [a,p] of ACTIONS){const r=await one(a,p); log(`${a}: ${r.status} · ${r.ms} ms`)}
+ log(`\nCarga: ${conc} concurrentes × ${rounds} rondas × ${ACTIONS.length} acciones`);
+ for(let round=1;round<=rounds;round++){
+   const jobs=[]; for(let i=0;i<conc;i++){const [a,p]=ACTIONS[(i+round-1)%ACTIONS.length]; jobs.push(one(a,p));}
+   const res=await Promise.all(jobs); all.push(...res); log(`Ronda ${round}: ${res.filter(x=>x.ok).length}/${res.length} correctas`);
+   await new Promise(r=>setTimeout(r,500));
+ }
+ const good=all.filter(x=>x.ok), bad=all.filter(x=>!x.ok), times=good.map(x=>x.ms), p50=pct(times,50),p95=pct(times,95),errRate=all.length?bad.length/all.length:1;
+ $('total').textContent=all.length; $('ok').textContent=good.length; $('err').textContent=bad.length; $('p50').textContent=p50+' ms'; $('p95').textContent=p95+' ms';
+ let verdict='APROBADO',cls='ok'; if(errRate>0.02||p95>3500){verdict='REVISAR';cls='bad'} else if(errRate>0||p95>2000){verdict='ACEPTABLE';cls='warn'} $('verdict').textContent=verdict; $('verdict').className='big '+cls;
+ const groups={}; for(const r of all){(groups[r.action]??=[]).push(r)}
+ let html='<table><tr><th>Acción</th><th>OK</th><th>Errores</th><th>P50</th><th>P95</th><th>Máx.</th></tr>';
+ for(const [a,rs] of Object.entries(groups)){const g=rs.filter(x=>x.ok),t=g.map(x=>x.ms);html+=`<tr><td><code>${a}</code></td><td>${g.length}/${rs.length}</td><td>${rs.length-g.length}</td><td>${pct(t,50)} ms</td><td>${pct(t,95)} ms</td><td>${t.length?Math.max(...t):'—'} ms</td></tr>`} html+='</table>';
+ $('table').innerHTML=html; if(bad.length){log('\nErrores:'); bad.slice(0,20).forEach(x=>log(`${x.action}: HTTP ${x.status} · ${x.ms} ms${x.error?' · '+x.error:''}`))}
+ log(`\nResultado: ${verdict} · P50 ${p50} ms · P95 ${p95} ms · errores ${(errRate*100).toFixed(1)}%`); $('run').disabled=false;
+}
+$('run').addEventListener('click',run);
+</script></body></html>
