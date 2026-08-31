@@ -1,0 +1,28 @@
+LaPollaTICO V25H4 — Performance & Production Hardening
+
+Cambios sin alterar funcionalidad ni diseño:
+- styles.css externo y cacheable; Google Fonts deja @import y usa preconnect/link.
+- compacted_at incluido en las RPC de Pollas: elimina lectura DB extra al abrir históricos/finalizadas.
+- savePrediction y savePredictionsBulk usan RPC atómica para evitar carreras de edit_count.
+- CORS cerrado por defecto a https://lapollatico.github.io.
+  Para la cuenta/repo definitivo, configurar secret de Edge Function:
+  CORS_ALLOWED_ORIGIN=https://NUEVA-CUENTA.github.io
+- Service Worker V25H4 cachea styles.css.
+
+Orden beta:
+1) SQL
+2) Edge Function
+3) styles.css
+4) app-core.js
+5) app-pwa.js
+6) index.html
+7) sw.js
+
+Pruebas mínimas:
+- app visualmente idéntica
+- app-core.js/app-pwa.js/styles.css = 200
+- Polla activa: login + guardar/cambiar pronóstico
+- finalizada no compactada: participante existente entra solo a revisar
+- compactada: histórico sin login
+- repetir H1 25x3
+- repetir H2 y confirmar edit_count estable

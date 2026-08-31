@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25G3)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H4)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
