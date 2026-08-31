@@ -1,0 +1,5238 @@
+// ============ BACKEND SUPABASE ============
+// El navegador SOLO llama a la Edge Function con la anon key pública.
+// La service_role NUNCA debe aparecer en este archivo.
+const SUPABASE_FUNCTION_URL = 'https://iiuppczbeezwxevlnahk.supabase.co/functions/v1/polla-api';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpdXBwY3piZWV6d3hldmxuYWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2MjY0MjMsImV4cCI6MjEwMzIwMjQyM30.Q6M-p1IUXCw3zPGGsR-BYiRen5oQWeLMfpzuf382mS0';
+const ADMIN_NAME = "Manolo";
+const ADMIN_PHONE = "51994339859";
+// Configuración de ejecución: el backend puede sobrescribir estos valores desde app_config.
+const DEFAULT_TUTORIAL_VIDEO_URL = "https://www.youtube.com/@TU_CANAL_AQUI";
+const PRECIO_POR_PERSONA = 10; // S/10 de inscripción por participante
+const PORCENTAJE_POZO = 0.805; // 80.5% de lo recaudado se reparte como premios
+const FREE_CONTEST_TOP_PERCENT_UI = 0.60; // solo para mostrar el % en el texto del admin; el corte real (con empates en la frontera) lo calcula el servidor
+
+const ICON_PEOPLE = '<svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9" cy="8" r="3.3" fill="currentColor"/><path d="M2 20c0-4.2 3.5-6.8 7-6.8s7 2.6 7 6.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="17.5" cy="9" r="2.6" fill="currentColor" opacity="0.55"/><path d="M15.5 20c0-3.1 1.9-5.4 4-6.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/></svg>';
+const ICON_BALL = '<svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9.3" stroke="currentColor" stroke-width="1.6"/><path d="M12 6.8l4.2 3-1.6 4.9H9.4l-1.6-4.9z" fill="currentColor"/><path d="M12 2.7v4.1M12 17.2v4.1M3 12h4.3M16.7 12H21" stroke="currentColor" stroke-width="1.2" opacity="0.5" stroke-linecap="round"/></svg>';
+const ICON_GOLD_EGG = '<svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:-2px;"><path d="M12 2C7.8 2 4.5 10 4.5 15a7.5 7.5 0 0015 0C19.5 10 16.2 2 12 2z" fill="url(#goldEggGrad)" stroke="#8a5f0b" stroke-width="0.6"/><ellipse cx="9.3" cy="10.5" rx="1.6" ry="2.4" fill="#fff" opacity="0.45"/></svg>';
+
+// Seguridad: escapa texto antes de inyectarlo vía innerHTML para prevenir XSS
+// (nombres de participantes son ingresados libremente por cualquier visitante).
+function escapeHtml(str){
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+// Misma idea que normalizeName_() del backend (Code.gs): compara nombres
+// ignorando mayúsculas/minúsculas Y tildes, para que "José"/"Jose" siempre
+// se reconozcan como la misma persona también acá en el frontend (si esto
+// no coincidiera con el backend, cosas como "resaltar mi pronóstico" o el
+// caché local tras enviar un pronóstico podían fallar por una tilde de más
+// o de menos).
+function normalizeName(str){
+  return String(str || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '');
+}
+// Igual que escapeHtml, pero para valores insertados dentro de un atributo
+// onclick="fn('...')": primero escapa para que sea un literal JS seguro
+// (comillas simples, backslashes) y luego escapa el resultado para HTML,
+// evitando tanto el escape del string JS como el del atributo HTML.
+function jsAttr(str){
+  const jsEscaped = String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return escapeHtml(jsEscaped);
+}
+
+let allPollas = [];
+let allPollasLoadedAt_ = 0;
+let allPollasScope_ = 'landing'; // C2: landing=activas/próximas; admin=lista completa
+let currentPolla = null;
+let landingScrollY_ = 0;
+let matches = [];
+let bulkMode = false;
+let selectedBulkMatches = new Set();
+let matchesView_ = 'upcoming'; // 'upcoming' = pendientes/futuros; 'resolved' = resultados/cancelados
+let collapsedDateGroups = new Set(); // fechas (YYYY-MM-DD) recogidas; se recalcula en cada loadMatches()
+let predictionsCache = {};
+let adminPredictionsCache = {}; // datos completos visibles solo para Admin autenticado
+let predictionTrendsCache = {};
+let predictionTrendsLoadedMatches = new Set();
+let authedName = null;
+let authedPin = null;
+let pendingAccessName = '';
+let pendingAccessState = null;
+let pendingIdentityName = '';
+let lastActivationCodes = [];
+let collapsedAdminGroups = new Set();
+// PIN de admin verificado por la Edge Function en authAdmin. Se guarda en memoria
+// (nunca en localStorage) y se reenvía en cada acción de admin, porque el
+// backend vuelve a validarlo en cada operación administrativa.
+let adminPin = null;
+let adminSessionToken = sessionStorage.getItem('tico:adminSession') || null;
+let adminSessionExpiresAt = Number(sessionStorage.getItem('tico:adminSessionExp') || 0);
+let adminStrongConfirmToken_ = null;
+
+function clearAdminSession_(){
+  adminSessionToken = null;
+  adminSessionExpiresAt = 0;
+  sessionStorage.removeItem('tico:adminSession');
+  sessionStorage.removeItem('tico:adminSessionExp');
+}
+function hasValidAdminSession_(){
+  if(!adminSessionToken) return false;
+  if(adminSessionExpiresAt && Date.now() >= adminSessionExpiresAt){ clearAdminSession_(); return false; }
+  return true;
+}
+const ADMIN_SESSION_ACTIONS_ = new Set([
+  'addPolla','editPolla','deletePolla','addMatch','editMatch','deleteMatch','cancelAndReplaceMatch',
+  'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion','getHistoricalPlayersAdmin','previewHistoricalPlayerDeletion','deleteHistoricalPlayer',
+  'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin',
+  'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
+  'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
+  'getStorageCleanupStatus','cleanupCompactedPollaStorage','getFinalArchiveAuditStatus','runFinalArchiveAudit','closeSeason','clearSeasonData',
+  'archivePolla','desarchivarPolla','editArchivedPremios','getAdminMatchPredictions','getAdminAllPredictions',
+  'getAdminPredictionSummary','setAppConfig','getSystemHealth'
+]);
+function withAdminSession_(obj){
+  const out = {...(obj||{})};
+  const action = String(out.action || '');
+  // IMPORTANTE: solo quitamos el PIN de acciones administrativas cubiertas por
+  // la sesión Admin. Nunca tocar el PIN de un jugador (authName, savePrediction,
+  // recuperación, WhatsApp, etc.). Antes D4 lo borraba si había una sesión Admin
+  // abierta y por eso un PIN correcto podía llegar vacío al backend.
+  if(ADMIN_SESSION_ACTIONS_.has(action) && hasValidAdminSession_()) delete out.pin;
+  return out;
+}
+// Nombre de quien está administrando en esta sesión (se pregunta una vez al
+// entrar). Se manda junto al PIN en cada acción de admin para que el
+// historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
+let adminName = null;
+const APP_VERSION = 'V25H4.2';
+let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
+let myReferralCode = null;
+let countdownTimer = null;
+let landingTimer = null;
+let participantsCache = [];
+let participantsCachePollaId = null;
+let participantsCacheAt = 0;
+let adminPredictionSummaryCache = {};
+let adminPredictionSummaryPollaId = null;
+let standingsCache = {pollaId:null, data:null, at:0};
+let yearlyStandingsCache = {data:null, at:0};
+const CACHE_TTL_PARTICIPANTS_MS = 30000;
+const CACHE_TTL_STANDINGS_MS = 30000;
+const CACHE_TTL_YEARLY_MS = 60000;
+const CACHE_TTL_MATCHES_MS = 15000;
+const matchesCacheByPolla_ = new Map();
+function invalidateMatchesCache_(pollaId){
+  const id = String(pollaId || currentPolla?.id || '');
+  if(id) matchesCacheByPolla_.delete(id);
+}
+const busyFlags = {};
+let incomingRefCode = '';
+let incomingPollaId = '';
+let deferredInstallPrompt = null; // evento beforeinstallprompt guardado para disparar la instalación al tocar el botón
+const LAST_PLAYER_NAME_KEY_PREFIX_ = 'tico:lastPlayerName:';
+let myWhatsapp_ = '';
+let hasSecurityAnswer_ = false;
+const dirtyPredictionIds_ = new Set();
+const inflightMutationKeys_ = new Map();
+const PREDICTION_DRAFT_PREFIX_ = 'tico:predictionDraft:';
+
+function predictionDraftKey_(matchId){
+  if(!currentPolla?.id || !authedName) return '';
+  return `${PREDICTION_DRAFT_PREFIX_}${currentPolla.id}:${normalizeName(authedName)}:${matchId}`;
+}
+function getPredictionDraft_(matchId){
+  try{
+    const key=predictionDraftKey_(matchId); if(!key) return null;
+    const raw=localStorage.getItem(key); if(!raw) return null;
+    const d=JSON.parse(raw);
+    if(!d || !Number.isInteger(Number(d.home)) || !Number.isInteger(Number(d.away))) return null;
+    return {home:Number(d.home),away:Number(d.away),savedAt:Number(d.savedAt)||0};
+  }catch(_){ return null; }
+}
+function savePredictionDraft_(matchId, home, away){
+  try{
+    const key=predictionDraftKey_(matchId); if(!key || home===null || away===null) return;
+    localStorage.setItem(key, JSON.stringify({home,away,savedAt:Date.now()}));
+  }catch(_){}
+}
+function clearPredictionDraft_(matchId){
+  try{ const key=predictionDraftKey_(matchId); if(key) localStorage.removeItem(key); }catch(_){}
+}
+function restorePredictionDrafts_(){
+  if(!authedName || !currentPolla) return 0;
+  let recovered=0;
+  for(const m of matches){
+    const draft=getPredictionDraft_(m.id);
+    if(!draft) continue;
+    if(m.resultSubmitted || m.isCanceled || isClosed(m.closeAt)){ clearPredictionDraft_(m.id); continue; }
+    const mine=(predictionsCache[m.id]||[]).find(p=>normalizeName(p.name)===normalizeName(authedName));
+    const differs=!mine || Number(mine.home)!==draft.home || Number(mine.away)!==draft.away;
+    if(differs){ dirtyPredictionIds_.add(m.id); recovered++; }
+    else clearPredictionDraft_(m.id);
+  }
+  return recovered;
+}
+
+function humanError_(value, fallback='No se pudo completar la operación. Intenta nuevamente.'){
+  const msg = String(value || '').trim();
+  if(!msg) return fallback;
+  const low = msg.toLowerCase();
+  if(low.includes('failed to fetch') || low.includes('networkerror') || low.includes('network error') || low.includes('load failed') || low.includes('timeout') || low.includes('sin conexión')){
+    return 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+  }
+  if(/(^|\D)5\d\d(\D|$)/.test(msg) || low.includes('<!doctype') || low.includes('internal server') || low.includes('json')){
+    return fallback;
+  }
+  return msg;
+}
+function lastPlayerName_(){
+  try{
+    if(!currentPolla?.id) return '';
+    return localStorage.getItem(LAST_PLAYER_NAME_KEY_PREFIX_ + currentPolla.id) || '';
+  }catch(_){ return ''; }
+}
+function rememberPlayerName_(name){
+  try{
+    if(currentPolla?.id && name){
+      localStorage.setItem(LAST_PLAYER_NAME_KEY_PREFIX_ + currentPolla.id, String(name));
+    }
+  }catch(_){}
+}
+function hasUnsavedPredictions_(){ return dirtyPredictionIds_.size > 0; }
+function confirmDiscardUnsaved_(){
+  return !hasUnsavedPredictions_() || confirm('Tienes un pronóstico sin guardar. ¿Salir de todas formas?');
+}
+function updateConnectionBar_(){
+  const bar=document.getElementById('connectionBar');
+  if(!bar) return;
+  bar.classList.toggle('hidden', navigator.onLine);
+}
+window.addEventListener('offline', updateConnectionBar_);
+window.addEventListener('online', updateConnectionBar_);
+window.addEventListener('beforeunload', (ev)=>{
+  if(hasUnsavedPredictions_()){
+    ev.preventDefault();
+    ev.returnValue='';
+  }
+});
+document.addEventListener('DOMContentLoaded', updateConnectionBar_);
+
+let overlayStackCounter = 0;
+function openOverlay(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  overlayStackCounter += 1;
+  el.style.zIndex = String(100 + overlayStackCounter * 10);
+  el.classList.add('show');
+}
+function closeOverlay(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('show');
+  el.style.zIndex = '';
+}
+
+let adminSessionCountdownTimer_ = null;
+function updateAdminSessionCountdown_(){
+  const el = document.getElementById('adminSessionMini');
+  if(!el) return;
+  const renewBtn = '<button type="button" onclick="renewAdminSession_()" style="border:0;background:transparent;color:#b77e08;font:inherit;font-weight:850;text-decoration:underline;cursor:pointer;padding:0 0 0 5px;">Renovar</button>';
+  if(!adminSessionExpiresAt){
+    el.innerHTML = hasValidAdminSession_() ? 'Sesión Admin activa' : `Sesión Admin expirada · ${renewBtn}`;
+    return;
+  }
+  const remainingMs = adminSessionExpiresAt - Date.now();
+  if(remainingMs <= 0){
+    clearAdminSession_();
+    el.innerHTML = `Sesión Admin expirada · ${renewBtn}`;
+    return;
+  }
+  const mins = Math.ceil(remainingMs / 60000);
+  if(mins <= 2){
+    el.innerHTML = `Sesión Admin · por expirar (${mins} min) · ${renewBtn}`;
+  } else {
+    el.textContent = `Sesión Admin · aprox. ${mins} min restantes`;
+  }
+}
+function ensureAdminSessionCountdown_(){
+  updateAdminSessionCountdown_();
+  if(adminSessionCountdownTimer_) return;
+  adminSessionCountdownTimer_ = setInterval(()=>{
+    const adminOpen = document.getElementById('adminOverlay')?.classList.contains('show');
+    const summaryOpen = document.getElementById('tabResumen')?.classList.contains('active');
+    if(adminOpen && summaryOpen) updateAdminSessionCountdown_();
+  }, 30000);
+}
+
+const APP_TIME_ZONE = 'America/Lima';
+function peruParts_(date){
+  const d = date instanceof Date ? date : new Date(date);
+  if(isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIME_ZONE, year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', hourCycle:'h23'
+  }).formatToParts(d);
+  const out = {};
+  parts.forEach(p => { if(p.type !== 'literal') out[p.type] = p.value; });
+  return out;
+}
+function fmtCloseTime(iso){
+  const d = new Date(iso);
+  return d.toLocaleString('es-PE', {timeZone:APP_TIME_ZONE, weekday:'short', day:'numeric', month:'short', hour:'numeric', minute:'2-digit'});
+}
+function fmtDate(iso){
+  if(!iso) return '';
+  const d = new Date(iso + (iso.length <= 10 ? 'T05:00:00Z' : ''));
+  return d.toLocaleDateString('es-PE', {timeZone:APP_TIME_ZONE, day:'numeric', month:'long', year:'numeric'});
+}
+// Todos los horarios deportivos de TICO se administran en hora de Perú, sin
+// depender de la zona horaria configurada en el teléfono/computadora del Admin.
+function toLocalInputValue(iso){
+  if(!iso) return '';
+  const p = peruParts_(iso);
+  return p ? `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}` : '';
+}
+function peruInputToISOString_(value){
+  if(!value) return '';
+  // Perú usa UTC-5 todo el año. datetime-local no lleva zona, por eso se la
+  // fijamos explícitamente antes de convertir a UTC.
+  const d = new Date(`${value}:00-05:00`);
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+function dateGroupKey(iso){
+  const p = peruParts_(iso);
+  return p ? `${p.year}-${p.month}-${p.day}` : '';
+}
+function dateKeyFromDate_(d){
+  const p = peruParts_(d);
+  return p ? `${p.year}-${p.month}-${p.day}` : '';
+}
+// Al entrar a una Polla, SOLO la jornada de HOY queda desplegada.
+// Todos los demás días —pasados o futuros— arrancan recogidos para ahorrar espacio.
+// El usuario y el Admin pueden abrir/cerrar manualmente cualquier jornada después.
+function computeDefaultCollapsedGroups(){
+  const todayKey = dateKeyFromDate_(new Date());
+  const collapsed = new Set();
+  const seenKeys = new Set(matches.map(m => dateGroupKey(m.closeAt)));
+  seenKeys.forEach(key => {
+    if(key !== todayKey) collapsed.add(key);
+  });
+  return collapsed;
+}
+function fmtDayHeader(iso){
+  const d = new Date(iso);
+  const p = peruParts_(d);
+  if(!p) return '';
+  const month = d.toLocaleDateString('es-PE', {timeZone:APP_TIME_ZONE, month:'short'}).replace('.','').toUpperCase();
+  return `${Number(p.day)} ${month}`;
+}
+function startLabel(dateStr){
+  if(!dateStr) return {text: '', soon: false};
+  const target = new Date(dateStr.length <= 10 ? dateStr + 'T00:00:00' : dateStr);
+  const now = new Date();
+  const diffMs = target - now;
+  if(diffMs <= 0) return {text: `🔒 Inscripciones cerradas`, soon:false};
+  const totalHours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  const soon = diffMs < 24 * 3600000;
+  let text;
+  if(days > 0 && hours > 0) text = `📝 Cierre de inscripciones en ${days}d ${hours}h`;
+  else if(days > 0) text = `📝 Cierre de inscripciones en ${days} día${days>1?'s':''}`;
+  else if(hours > 0) text = `📝 Cierre de inscripciones en ${hours}h`;
+  else { const mins = Math.floor(diffMs / 60000); text = `📝 ¡Cierre de inscripciones en ${mins} min!`; }
+  return {text, soon};
+}
+function isClosed(iso){ return new Date() > new Date(iso); }
+function siteUrl(){ return location.origin + location.pathname; }
+function fmtCountdown(iso){
+  const diff = new Date(iso) - new Date();
+  if(diff <= 0) return null;
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  if(h > 24){ const d = Math.floor(h/24); return `Cierra en ${d}d ${h%24}h`; }
+  if(h > 0) return `Cierra en ${h}h ${m}min`;
+  return `Cierra en ${m}min`;
+}
+let activeRequests = 0;
+function showGlobalLoader(){
+  activeRequests++;
+  document.getElementById('globalLoader').classList.remove('hidden');
+}
+function hideGlobalLoader(){
+  activeRequests = Math.max(0, activeRequests - 1);
+  if(activeRequests === 0) document.getElementById('globalLoader').classList.add('hidden');
+}
+// En datos móviles las conexiones son más inestables que en wifi: paquetes perdidos,
+// cambios de antena, cobertura débil. Sin esto, una llamada que se cuelga puede dejar
+// el "Cargando..." pegado para siempre, o un botón trabado en "Enviando...".
+const REQUEST_TIMEOUT_MS = 20000;
+async function fetchWithTimeout_(url, options){
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try{
+    return await fetch(url, {...(options||{}), signal: controller.signal});
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+let lastApiRequestId_ = '';
+let lastTechnicalIssue_ = null;
+const recentTechnicalIssues_ = [];
+const healthLatencySamples_ = [];
+function newRequestId_(){
+  try{
+    const raw = crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase();
+    return `TICO-${raw}`;
+  }catch(_){
+    return `TICO-${Date.now().toString(36).toUpperCase()}`;
+  }
+}
+function rememberTechnicalIssue_(requestId, message){
+  lastTechnicalIssue_ = {
+    requestId: String(requestId || ''),
+    message: String(message || 'Error técnico'),
+    at: Date.now()
+  };
+  recentTechnicalIssues_.unshift({...lastTechnicalIssue_});
+  if(recentTechnicalIssues_.length > 5) recentTechnicalIssues_.length = 5;
+}
+function requestCodeText_(requestId){
+  return requestId ? ` Código: ${requestId}.` : '';
+}
+function supabaseHeaders_(includeJson=false, requestId=''){
+  const headers = {
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+  };
+  if(includeJson) headers['Content-Type'] = 'application/json';
+  if(requestId) headers['X-Request-ID'] = requestId;
+  if(hasValidAdminSession_()) headers['X-Admin-Session'] = adminSessionToken;
+  if(adminStrongConfirmToken_) headers['X-Admin-Confirm'] = adminStrongConfirmToken_;
+  return headers;
+}
+
+async function parseApiResponse_(res, requestId=''){
+  let payload = null;
+  const raw = await res.text();
+
+  if(raw){
+    try{
+      payload = JSON.parse(raw);
+    } catch(_){
+      payload = {ok:false, error: raw};
+    }
+  } else {
+    payload = {};
+  }
+
+  // La Edge Function devuelve varios errores funcionales con HTTP 200
+  // (por ejemplo WRONG_PIN / NOT_QUALIFIED), y esos se manejan arriba en la UI.
+  // Un HTTP no-2xx sí se normaliza para no dejar errores opacos.
+  if(!res.ok){
+    const technical =
+      (payload && payload.error) ||
+      (payload && payload.message) ||
+      `Error del servidor (${res.status})`;
+    const friendly = res.status >= 500
+      ? 'No se pudo completar la operación. Intenta nuevamente.'
+      : humanError_(technical, 'No se pudo completar la operación.');
+    if(res.status >= 500) rememberTechnicalIssue_(requestId, technical);
+    const shown = res.status >= 500 ? `${friendly}${requestCodeText_(requestId)}` : friendly;
+    if(payload && typeof payload === 'object'){
+      if(payload.ok === undefined) payload.ok = false;
+      payload.technicalError = technical;
+      payload.requestId = payload.requestId || requestId || '';
+      payload.error = shown;
+      return payload;
+    }
+    return {ok:false, error:shown, technicalError:technical, requestId};
+  }
+
+  if(payload && typeof payload === 'object' && requestId && !payload.requestId) payload.requestId = requestId;
+  return payload;
+}
+
+const inflightGetRequests_ = new Map();
+
+async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=true){
+  const requestParams_ = withAdminSession_({action, ...params});
+  delete requestParams_.action;
+  const qs = new URLSearchParams({action, ...requestParams_}).toString();
+  const url = `${SUPABASE_FUNCTION_URL}?${qs}`;
+  const key = url;
+
+  // OPT V15: si dos partes de la interfaz piden exactamente el mismo GET al
+  // mismo tiempo, comparten una sola llamada. Evita duplicar tráfico y esperas.
+  if(dedupe && inflightGetRequests_.has(key)) return inflightGetRequests_.get(key);
+
+  const job = (async()=>{
+    const requestId = newRequestId_();
+    lastApiRequestId_ = requestId;
+    if(!silent) showGlobalLoader();
+    try{
+      const res = await fetchWithTimeout_(
+        url,
+        {
+          method:'GET',
+          headers:supabaseHeaders_(false, requestId)
+        }
+      );
+
+      const result = await parseApiResponse_(res, requestId);
+      const adminTechnical = String(result?.technicalError || result?.error || '');
+      if(result && !result.ok && (adminTechnical === 'ADMIN_SESSION_EXPIRED' || adminTechnical === 'ADMIN_SESSION_INVALID')){
+        clearAdminSession_();
+        adminPin = null;
+        result.error = 'Sesión de administrador vencida. Vuelve a entrar a Admin.';
+      }
+
+      if(!res.ok && res.status >= 500 && retriesLeft > 0){
+        await new Promise(r => setTimeout(r, 700));
+        return apiGet(action, params, retriesLeft - 1, silent, false);
+      }
+
+      return result;
+    } catch(err){
+      if(retriesLeft > 0){
+        await new Promise(r => setTimeout(r, 700));
+        return apiGet(action, params, retriesLeft - 1, silent, false);
+      }
+      const msg = err?.name === 'AbortError'
+        ? 'La solicitud tardó demasiado.'
+        : 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+      rememberTechnicalIssue_(requestId, err?.message || msg);
+      const wrapped = new Error(`${msg}${requestCodeText_(requestId)}`);
+      wrapped.requestId = requestId;
+      throw wrapped;
+    } finally {
+      if(!silent) hideGlobalLoader();
+    }
+  })();
+
+  if(dedupe){
+    inflightGetRequests_.set(key, job);
+    job.then(
+      ()=>{ if(inflightGetRequests_.get(key)===job) inflightGetRequests_.delete(key); },
+      ()=>{ if(inflightGetRequests_.get(key)===job) inflightGetRequests_.delete(key); }
+    );
+  }
+  return job;
+}
+
+function apiGetSilent(action, params={}){
+  return apiGet(action, params, 2, true, true);
+}
+
+async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=false){
+  const originalParams = {...(params || {})};
+  const action = String(originalParams?.action || '');
+
+  // D4.3: si una acción Admin se intenta justo después de vencer la sesión,
+  // renovarla en el mismo panel en vez de mandar una petición sin token/PIN.
+  if(ADMIN_SESSION_ACTIONS_.has(action) && !hasValidAdminSession_() && !adminRenewAttempted){
+    const renewed = await renewAdminSession_();
+    if(!renewed) return {ok:false,error:'Sesión de administrador vencida.'};
+    adminRenewAttempted = true;
+  }
+
+  params = withAdminSession_(originalParams);
+  const mutationActions = new Set([
+    'savePrediction','savePredictionsBulk','setParticipantPaid','addParticipants','addMatch','editMatch',
+    'submitResult','cancelAndReplaceMatch','addPolla','editPolla','deletePolla',
+    'archivePolla','desarchivarPolla','closeSeason','clearSeasonData',
+    'setSecurityAnswer','updateMyWhatsapp','resetPin','renameParticipant',
+    'splitParticipantIdentity','deleteParticipantFull','deleteHistoricalPlayer','setAppConfig'
+  ]);
+  const dedupeMutation = mutationActions.has(action);
+  const mutationKey = dedupeMutation ? JSON.stringify(params || {}) : '';
+
+  if(dedupeMutation && inflightMutationKeys_.has(mutationKey)){
+    return inflightMutationKeys_.get(mutationKey);
+  }
+
+  const job = (async()=>{
+    const requestId = newRequestId_();
+    lastApiRequestId_ = requestId;
+    if(!silent) showGlobalLoader();
+    try{
+      const res = await fetchWithTimeout_(
+        SUPABASE_FUNCTION_URL,
+        {
+          method:'POST',
+          headers:supabaseHeaders_(true, requestId),
+          body:JSON.stringify(params || {})
+        }
+      );
+      const result = await parseApiResponse_(res, requestId);
+      if(result?.ok){
+        const matchMutations_ = new Set(['addMatch','editMatch','deleteMatch','cancelAndReplaceMatch','submitResult','compactPollaV2','clearSeasonData']);
+        if(matchMutations_.has(action)) invalidateMatchesCache_(originalParams.pollaId || currentPolla?.id || '');
+      }
+      const technicalAdminError = String(result?.technicalError || result?.error || '');
+      if(
+        !result?.ok &&
+        ADMIN_SESSION_ACTIONS_.has(action) &&
+        !adminRenewAttempted &&
+        (technicalAdminError === 'ADMIN_SESSION_EXPIRED' || technicalAdminError === 'ADMIN_SESSION_INVALID')
+      ){
+        clearAdminSession_();
+        adminPin = null;
+        const renewed = await renewAdminSession_();
+        if(!renewed) return {ok:false,error:'Sesión de administrador vencida.'};
+        // liberar el dedupe de la petición vencida antes de repetirla con el token nuevo
+        if(dedupeMutation) inflightMutationKeys_.delete(mutationKey);
+        return apiPost(originalParams, retriesLeft, silent, true);
+      }
+
+      if(
+        result &&
+        !result.ok &&
+        retriesLeft > 0 &&
+        result.error &&
+        String(result.error).toLowerCase().includes('ocupado')
+      ){
+        await new Promise(r => setTimeout(r, 900 * (3 - retriesLeft)));
+        return apiPost(originalParams, retriesLeft - 1, silent, adminRenewAttempted);
+      }
+
+      return result;
+    } catch(err){
+      const msg = err?.name === 'AbortError'
+        ? 'La solicitud tardó demasiado.'
+        : 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
+      rememberTechnicalIssue_(requestId, err?.message || msg);
+      return {
+        ok:false,
+        error:`${msg}${requestCodeText_(requestId)}`,
+        requestId
+      };
+    } finally {
+      if(!silent) hideGlobalLoader();
+    }
+  })();
+
+  if(dedupeMutation){
+    inflightMutationKeys_.set(mutationKey, job);
+    job.finally(()=>{ if(inflightMutationKeys_.get(mutationKey)===job) inflightMutationKeys_.delete(mutationKey); });
+  }
+  return job;
+}
+
+function apiPostSilent(params){
+  return apiPost(params, 2, true);
+}
+
+function contactAdmin(){
+  const pollaRef = currentPolla ? ` # ${currentPolla.number}` : '';
+  let text;
+  if(authedName){
+    text = `👋 Hola ${ADMIN_NAME}, te escribo por la Polla "TICO"${pollaRef}.\n\n✅ Ya estoy inscrito como: ${authedName}\n📋 Quiero finalizar mi proceso de inscripción.`;
+  } else {
+    text = `👋 Hola ${ADMIN_NAME}, te escribo por la Polla "TICO"${pollaRef}.\n\n📝 ¿Me puedes brindar los pasos para inscribirme?`;
+  }
+  window.open(`https://wa.me/${ADMIN_PHONE}?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+/* ============ DEDUPLICACIÓN Y ORDENAMIENTO DE PARTIDOS (PARTIDO RECIENTE ARRIBA / PARTIDO 1 ABAJO) ============ */
+function getSortedMatches(){
+  const map = new Map();
+  matches.forEach(m => map.set(m.id, m));
+  const list = Array.from(map.values());
+
+  // Orden descendente por número de partido (Partidos recientes arriba, Partido 1 abajo)
+  list.sort((a,b) => {
+    const numA = parseFloat(a.matchNumber) || 0;
+    const numB = parseFloat(b.matchNumber) || 0;
+    if(numA !== numB) return numB - numA;
+    if(!a.isCanceled && b.isCanceled) return -1;
+    if(a.isCanceled && !b.isCanceled) return 1;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  return list;
+}
+
+/* ============ CASILLAS DE MARCADOR Y ENVÍO MASIVO ============ */
+function toggleBulkMode(){
+  if(document.getElementById('bulkModeCheckbox')?.checked && playerActionBlocked_('prediction')){ document.getElementById('bulkModeCheckbox').checked=false; bulkMode=false; return; }
+  bulkMode = document.getElementById('bulkModeCheckbox').checked;
+  if(bulkMode){
+    // No seleccionamos a escondidas partidos de jornadas retraídas. Al entrar,
+    // normalmente solo HOY está abierto; cualquier partido de otra fecha se
+    // añade al envío masivo cuando el usuario lo abre/edita o lo marca.
+    const visibleOpenMatches = getSortedMatches().filter(m =>
+      !m.resultSubmitted && !m.isCanceled && !isClosed(m.closeAt) && !collapsedDateGroups.has(dateGroupKey(m.closeAt))
+    );
+    selectedBulkMatches = new Set(visibleOpenMatches.map(m => m.id));
+  } else {
+    selectedBulkMatches.clear();
+  }
+  renderMatches();
+}
+
+function toggleMatchBulkSelect(matchId, isChecked){
+  if(isChecked){
+    selectedBulkMatches.add(matchId);
+  } else {
+    selectedBulkMatches.delete(matchId);
+  }
+  const labelText = document.getElementById(`bulk-text-${matchId}`);
+  if(labelText){
+    labelText.textContent = isChecked ? '✅ Incluido para envío masivo' : '⬜ Omitir este partido';
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar(){
+  const bar = document.getElementById('bulkBar');
+  if(!bar) return;
+  const openMatches = getSortedMatches().filter(m => !m.resultSubmitted && !m.isCanceled && !isClosed(m.closeAt));
+  const count = openMatches.filter(m => selectedBulkMatches.has(m.id)).length;
+
+  if(bulkMode && authedName && openMatches.length > 0){
+    bar.classList.remove('hidden');
+    const btn = document.getElementById('bulkSendBtn');
+    if(count > 0){
+      btn.disabled = false;
+      btn.textContent = `📤 Enviar los ${count} pronósticos seleccionados`;
+    } else {
+      btn.disabled = true;
+      btn.textContent = `⚠️ Selecciona al menos 1 casilla de partido`;
+    }
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+async function sendAllPredictions(){
+  if(playerActionBlocked_('prediction')) return;
+  if(!authedName || !authedPin) return;
+  const selectedMatches = getSortedMatches().filter(m => !m.resultSubmitted && !m.isCanceled && !isClosed(m.closeAt) && selectedBulkMatches.has(m.id));
+  if(selectedMatches.length === 0){
+    alert('Selecciona al menos una casilla de partido para enviar.');
+    return;
+  }
+
+  const payload = [];
+  for(const m of selectedMatches){
+    const homeEl = document.getElementById(`score-${m.id}-home`);
+    const awayEl = document.getElementById(`score-${m.id}-away`);
+    if(!homeEl || !awayEl) continue;
+    const home = parseScoreValue_(homeEl.value);
+    const away = parseScoreValue_(awayEl.value);
+    if(home === null || away === null){
+      alert(`Marcador inválido en ${m.home} vs ${m.away}. Usa números enteros entre 0 y 20.`);
+      return;
+    }
+    payload.push({matchId:m.id, home, away});
+  }
+  if(payload.length === 0) return;
+
+  const btn = document.getElementById('bulkSendBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `Enviando ${payload.length} pronóstico${payload.length===1?'':'s'}...`;
+
+  try{
+    // B2: una sola llamada HTTP. El servidor autentica al jugador una vez,
+    // valida todos los cierres y guarda el lote de forma conjunta.
+    const result = await apiPost({
+      action:'savePredictionsBulk',
+      pollaId:currentPolla.id,
+      name:authedName,
+      pin:authedPin,
+      predictions:payload
+    });
+
+    if(!result?.ok){
+      alert(humanError_(result?.error, 'No pudimos guardar tus pronósticos. Revisa tu conexión e inténtalo otra vez.'));
+      return;
+    }
+
+    const byId = new Map(payload.map(p=>[String(p.matchId), p]));
+    const savedIds = Array.isArray(result.savedIds) ? result.savedIds.map(String) : [];
+    const unchangedIds = Array.isArray(result.unchangedIds) ? result.unchangedIds.map(String) : [];
+    const confirmed = new Set([...savedIds, ...unchangedIds]);
+
+    confirmed.forEach(id=>{
+      const p = byId.get(id);
+      if(!p) return;
+      updateLocalPrediction(id, authedName, p.home, p.away);
+      dirtyPredictionIds_.delete(id);
+      clearPredictionDraft_(id);
+      selectedBulkMatches.delete(id);
+    });
+
+    await renderMatches();
+
+    const failed = Array.isArray(result.failed) ? result.failed : [];
+    if(failed.length === 0){
+      // C1: si todo el lote quedó confirmado, cerramos también el modo masivo.
+      // Si hubo algún fallo, lo dejamos activo para que el usuario pueda corregir y reintentar.
+      bulkMode = false;
+      selectedBulkMatches.clear();
+      const bulkCheckbox = document.getElementById('bulkModeCheckbox');
+      if(bulkCheckbox) bulkCheckbox.checked = false;
+      await renderMatches();
+      showToast_(`✅ ${confirmed.size} pronóstico${confirmed.size===1?'':'s'} guardado${confirmed.size===1?'':'s'}`);
+    }else{
+      const names = failed.slice(0,3).map(f=>{
+        const m = selectedMatches.find(x=>String(x.id)===String(f.matchId));
+        return m ? `${m.home} vs ${m.away}` : 'un partido';
+      });
+      const detail = names.length ? `:\n• ${names.join('\n• ')}` : '';
+      alert(`Se guardaron ${confirmed.size} pronóstico(s), pero ${failed.length} no pudieron enviarse${detail}. Revisa los pendientes e inténtalo otra vez.`);
+    }
+  }catch(_){
+    alert('No pudimos guardar tus pronósticos. Revisa tu conexión e inténtalo otra vez.');
+  }finally{
+    btn.disabled = false;
+    updateBulkBar();
+    if(btn.textContent.startsWith('Enviando')) btn.textContent = originalText;
+  }
+}
+
+/* ============ LINK CON PARÁMETROS ============ */
+(function readUrlParams(){
+  const params = new URLSearchParams(location.search);
+  incomingPollaId = params.get('polla') || '';
+  incomingRefCode = (params.get('ref') || '').toUpperCase();
+})();
+
+// V23: al refrescar dentro de una Polla mostramos de inmediato el cascarón de la
+// Polla (no una pantalla verde vacía). Importante: NO incrementamos activeRequests
+// manualmente aquí; apiGet() ya administra el loader y así evitamos que quede pegado.
+if(incomingPollaId){
+  document.getElementById('landingScreen')?.classList.add('hidden');
+  document.getElementById('appScreen')?.classList.remove('hidden');
+  const restoreTitle = document.getElementById('pollaTitle');
+  if(restoreTitle) restoreTitle.textContent = 'Cargando tu Polla…';
+  const restoreBox = document.getElementById('matchesContainer');
+  if(restoreBox) restoreBox.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
+}
+
+
+/* ============ CAMPOS PIN / ADMIN SIN PASSWORD MANAGER (V23) ============ */
+// Chrome/Edge suelen interpretar cualquier <input type="password"> como contraseña web.
+// Para los PIN internos de TICO usamos un campo de texto visualmente enmascarado SOLO
+// cuando el navegador soporta -webkit-text-security. En otros navegadores queda el
+// type=password original como fallback seguro.
+function configureSensitiveInputs_(){
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  document.querySelectorAll('[data-tico-sensitive]').forEach(input => {
+    input.setAttribute('autocomplete','off');
+    input.setAttribute('data-lpignore','true');
+    input.setAttribute('data-1p-ignore','true');
+    input.dataset.ticoMasked = '1';
+    if(canMaskText){
+      input.type = 'text';
+      input.style.webkitTextSecurity = 'disc';
+    } else {
+      // Fallback para navegadores que no soportan la máscara CSS.
+      input.type = 'password';
+    }
+  });
+}
+configureSensitiveInputs_();
+
+/* ============ AVISOS BREVES + VALIDACIÓN DE MARCADOR (V22) ============ */
+function showToast_(message){
+  let toast = document.getElementById('ticoToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'ticoToast';
+    toast.setAttribute('role','status');
+    toast.setAttribute('aria-live','polite');
+    toast.style.cssText = [
+      'position:fixed','left:50%','bottom:24px','transform:translate(-50%,14px)',
+      'z-index:100002','max-width:calc(100vw - 32px)','padding:11px 16px',
+      'border:1px solid rgba(242,193,78,.65)','border-radius:12px',
+      'background:rgba(8,18,16,.97)','color:#F6F3EA','font-weight:800',
+      'box-shadow:0 12px 30px rgba(0,0,0,.42)','opacity:0',
+      'transition:opacity .18s ease, transform .18s ease','pointer-events:none',
+      'text-align:center'
+    ].join(';');
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  toast.style.transform = 'translate(-50%,0)';
+  clearTimeout(showToast_._timer);
+  showToast_._timer = setTimeout(()=>{
+    toast.style.opacity = '0';
+    toast.style.transform = 'translate(-50%,14px)';
+  }, 2200);
+}
+
+function parseScoreValue_(raw){
+  const text = String(raw ?? '').trim();
+  if(!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if(!Number.isInteger(n) || n < 0 || n > 20) return null;
+  return n;
+}
+
+let matchesLoadFailed_ = false;
+let landingLoadFailed_ = false;
+
+window.addEventListener('online', () => {
+  // Si la portada o una Polla fallaron por conexión, reintentar al volver Internet.
+  if(landingLoadFailed_ && !currentPolla){
+    void initLanding();
+  }
+  if(matchesLoadFailed_ && currentPolla){
+    void loadMatches();
+  }
+});
+
+/* ============ CONFETI ============ */
+function launchConfetti(){
+  const colors = ['#F2C14E','#D64545','#2E86AB','#4CAF6D','#F6F3EA'];
+  for(let i=0; i<40; i++){
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    const size = 6 + Math.random()*6;
+    piece.style.width = size+'px'; piece.style.height = (size*1.6)+'px';
+    piece.style.left = (Math.random()*100)+'vw';
+    piece.style.background = colors[Math.floor(Math.random()*colors.length)];
+    piece.style.animation = `confettiFall ${1.8+Math.random()*1.4}s ease-in forwards`;
+    piece.style.animationDelay = (Math.random()*0.4)+'s';
+    document.body.appendChild(piece);
+    setTimeout(()=>piece.remove(), 3600);
+  }
+}
+
+/* ============ QR ============ */
+let qrLibPromise_ = null;
+function ensureQRCodeLib_(){
+  if(window.QRCode) return Promise.resolve();
+  if(qrLibPromise_) return qrLibPromise_;
+  qrLibPromise_ = new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    script.async=true;
+    script.onload=()=>resolve();
+    script.onerror=()=>{ qrLibPromise_=null; reject(new Error('No se pudo cargar el generador QR.')); };
+    document.head.appendChild(script);
+  });
+  return qrLibPromise_;
+}
+
+async function openQR(url, title, hint){
+  try{ await ensureQRCodeLib_(); }catch(e){ alert('No se pudo cargar el generador QR. Revisa tu conexión e inténtalo nuevamente.'); return; }
+  document.getElementById('qrTitle').textContent = title || 'Código QR';
+  document.getElementById('qrHint').textContent = hint || url;
+  const box = document.getElementById('qrBox');
+  box.innerHTML = '';
+  new QRCode(box, {text: url, width: 220, height: 220, colorDark:'#10202B', colorLight:'#ffffff'});
+  openOverlay('qrOverlay');
+}
+async function downloadQR(){
+  const box = document.getElementById('qrBox');
+  const src = box.querySelector('canvas') || box.querySelector('img');
+  if(!src){ alert('No se pudo generar la imagen.'); return; }
+
+  await document.fonts.load('800 40px Inter');
+  const title = document.getElementById('qrTitle').textContent;
+
+  const CARD = 900, QR = 620;
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = CARD; outCanvas.height = CARD + 150;
+  const ctx = outCanvas.getContext('2d');
+
+  ctx.fillStyle = '#16342A';
+  ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+
+  ctx.fillStyle = '#F2C14E';
+  ctx.font = '800 38px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(title, outCanvas.width/2, 66);
+
+  const cardY = 100;
+  ctx.fillStyle = '#ffffff';
+  roundRect(ctx, (CARD - CARD)/2, cardY, CARD, CARD, 28);
+  ctx.fill();
+
+  ctx.drawImage(src, (CARD - QR)/2, cardY + (CARD - QR)/2, QR, QR);
+
+  ctx.fillStyle = 'rgba(246,243,234,0.75)';
+  ctx.font = '600 26px Inter, sans-serif';
+  ctx.fillText('📲 Escanéame con la cámara', outCanvas.width/2, cardY + CARD + 48);
+
+  const a = document.createElement('a');
+  a.href = outCanvas.toDataURL('image/png');
+  a.download = 'qr-polla-tico.png';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+/* ============ IMAGEN PARA COMPARTIR ============ */
+let mascotImgCache = null;
+function loadMascotImg(){
+  return new Promise(resolve => {
+    if(mascotImgCache){ resolve(mascotImgCache); return; }
+    const img = new Image();
+    img.onload = () => { mascotImgCache = img; resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = 'mascota-gallo-peru.png';
+  });
+}
+function drawSportBackdrop_(ctx,W,H){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#071713'); grad.addColorStop(.52,'#103529'); grad.addColorStop(1,'#06120F');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  const glow=ctx.createRadialGradient(W*.5,H*.12,0,W*.5,H*.12,W*.7);
+  glow.addColorStop(0,'rgba(38,120,86,.34)');glow.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(242,193,78,.55)';ctx.lineWidth=3;
+  [[-80,215,420,45],[725,1320,1120,1160]].forEach(a=>{ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(a[2],a[3]);ctx.stroke();});
+  ctx.strokeStyle='rgba(255,255,255,.055)';ctx.lineWidth=1;
+  for(let y=360;y<H;y+=150){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y-20);ctx.stroke();}
+  for(let i=0;i<22;i++){const x=(i*211)%W,y=110+((i*307)%1080);ctx.fillStyle=i%3?'rgba(242,193,78,.38)':'rgba(255,255,255,.16)';ctx.fillRect(x,y,3+(i%3),3+(i%2));}
+}
+async function loadCanvasImage_(src){
+  if(!src) return null;
+  return new Promise(resolve=>{const img=new Image(); if(!String(src).startsWith('data:')) img.crossOrigin='anonymous'; img.onload=()=>resolve(img); img.onerror=()=>resolve(null); img.src=src;});
+}
+function drawCoverImage_(ctx,img,x,y,w,h,alpha=.24){
+  if(!img)return; const r=Math.max(w/img.width,h/img.height); const sw=w/r,sh=h/r,sx=(img.width-sw)/2,sy=(img.height-sh)/2;
+  ctx.save();ctx.globalAlpha=alpha;ctx.drawImage(img,sx,sy,sw,sh,x,y,w,h);ctx.restore();
+}
+function drawContainImage_(ctx,img,x,y,w,h,alpha=1){
+  if(!img) return;
+  const r=Math.min(w/img.width,h/img.height);
+  const dw=img.width*r, dh=img.height*r;
+  const dx=x+(w-dw)/2, dy=y+(h-dh)/2;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.drawImage(img,dx,dy,dw,dh); ctx.restore();
+}
+async function generateInviteFlyerImage(referralCode, footerUrl){
+  await document.fonts.load('900 60px Anton');
+  await document.fonts.load('700 30px Inter');
+  const mascot=await loadMascotImg();
+  const W=1080,H=1350,canvas=document.createElement('canvas');
+  canvas.width=W; canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  drawSportBackdrop_(ctx,W,H);
+
+  // Encabezado: una sola columna y ejes compartidos para evitar sensación de elementos "corridos".
+  ctx.textAlign='center';
+  ctx.fillStyle='#F2C14E'; ctx.font='900 27px Inter, sans-serif';
+  ctx.fillText('LA POLLA "TICO"',W/2,64);
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 66px Anton, sans-serif';
+  ctx.fillText('¡TE RETAMOS A LA MEJOR',W/2,145);
+  ctx.fillText('POLLA DE FÚTBOL!',W/2,214);
+  ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='800 22px Inter, sans-serif';
+  ctx.fillText('PRONOSTICA  •  COMPITE  •  GANA',W/2,258);
+
+  // Cuerpo: mascota a la izquierda y tarjeta de invitación perfectamente alineada a la derecha.
+  const cardX=510, cardY=315, cardW=500, cardH=690;
+  if(mascot){
+    const mh=560, mw=mh*(mascot.width/mascot.height);
+    const mx=Math.max(18,270-mw/2), my=335;
+    ctx.save(); ctx.globalAlpha=.98; ctx.drawImage(mascot,mx,my,mw,mh); ctx.restore();
+  }
+
+  ctx.fillStyle='rgba(3,12,10,.90)'; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.fill();
+  ctx.strokeStyle='rgba(242,193,78,.50)'; ctx.lineWidth=2; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.stroke();
+
+  const cx=cardX+cardW/2;
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 34px Anton, sans-serif'; ctx.fillText('POLLA TICO',cx,cardY+62);
+  ctx.fillStyle='#F2C14E'; ctx.font='900 72px Anton, sans-serif'; ctx.fillText(`#${currentPolla.number}`,cx,cardY+138);
+  ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='700 20px Inter, sans-serif'; ctx.fillText('USA MI CÓDIGO DE INVITACIÓN',cx,cardY+184);
+
+  const codeX=cardX+44, codeY=cardY+208, codeW=cardW-88, codeH=100;
+  ctx.fillStyle='#F2C14E'; roundRect(ctx,codeX,codeY,codeW,codeH,18); ctx.fill();
+  ctx.fillStyle='#10202B'; ctx.font='900 58px Anton, sans-serif';
+  fitCanvasText_(ctx,referralCode||'TICO',cx,codeY+69,codeW-36,58);
+
+  ctx.fillStyle='rgba(246,243,234,.76)'; ctx.font='650 19px Inter, sans-serif';
+  ctx.fillText('Escanea el QR para entrar directamente',cx,cardY+352);
+
+  const qrSize=230, qrX=cx-qrSize/2, qrY=cardY+382;
+  await drawShareQR_(ctx,footerUrl,qrX,qrY,qrSize);
+  ctx.fillStyle='rgba(246,243,234,.62)'; ctx.font='600 17px Inter, sans-serif';
+  ctx.fillText('Tu código quedará asociado a esta Polla',cx,cardY+665);
+
+  // CTA inferior, centrado y con respiración suficiente respecto al bloque principal.
+  ctx.fillStyle='#F2C14E'; ctx.font='900 54px Anton, sans-serif';
+  ctx.fillText('¡ÚNETE A LA POLLA TICO!',W/2,1092);
+  ctx.fillStyle='rgba(246,243,234,.84)'; ctx.font='800 23px Inter, sans-serif';
+  ctx.fillText('⚽ PRONOSTICA   •   🏆 COMPITE   •   🎁 GANA',W/2,1140);
+
+  ctx.fillStyle='rgba(0,0,0,.30)'; roundRect(ctx,150,1200,W-300,92,22); ctx.fill();
+  ctx.fillStyle='#F6F3EA'; ctx.font='700 21px Inter, sans-serif';
+  ctx.fillText('Comparte este flyer con tus amigos',W/2,1238);
+  ctx.fillStyle='rgba(246,243,234,.58)'; ctx.font='600 17px Inter, sans-serif';
+  ctx.fillText('LaPollaTICO · Tu código cuenta únicamente en esta Polla',W/2,1270);
+
+  return new Promise(resolve=>canvas.toBlob(blob=>resolve(blob),'image/png'));
+}
+
+async function generatePredictionShareImage(match,mine,footerUrl){
+  await document.fonts.load('900 60px Anton');
+  await document.fonts.load('700 30px Inter');
+  const mascot=await loadMascotImg();
+  const W=1080,H=1350,canvas=document.createElement('canvas');
+  canvas.width=W; canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  drawSportBackdrop_(ctx,W,H);
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#F2C14E'; ctx.font='900 27px Inter, sans-serif';
+  ctx.fillText('LA POLLA "TICO"',W/2,58);
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 68px Anton, sans-serif';
+  ctx.fillText(match.resultSubmitted?'MI RESULTADO':'MI PRONÓSTICO',W/2,140);
+  ctx.fillStyle='rgba(246,243,234,.88)'; ctx.font='800 22px Inter, sans-serif';
+  ctx.fillText('⚽ PRONOSTICA  •  🏆 COMPITE  •  🎁 GANA',W/2,181);
+
+  // Imagen REAL del partido subida por el Admin. Se muestra COMPLETA, sin recortes.
+  const imageX=52,imageY=210,imageW=W-104,imageH=520;
+  ctx.fillStyle='rgba(3,12,10,.96)'; roundRect(ctx,imageX,imageY,imageW,imageH,30); ctx.fill();
+  const matchImg=await loadCanvasImage_(match.imageUrl||match.image_url||'');
+  if(matchImg){
+    ctx.save();
+    roundRect(ctx,imageX,imageY,imageW,imageH,30); ctx.clip();
+    drawContainImage_(ctx,matchImg,imageX,imageY,imageW,imageH,1);
+    ctx.restore();
+  }else{
+    ctx.fillStyle='rgba(246,243,234,.12)'; ctx.font='900 50px Anton, sans-serif';
+    fitCanvasText_(ctx,match.home,300,468,380,50);
+    fitCanvasText_(ctx,match.away,780,468,380,50);
+    ctx.fillStyle='#F2C14E'; ctx.font='900 44px Anton, sans-serif'; ctx.fillText('VS',W/2,468);
+  }
+  ctx.strokeStyle='rgba(242,193,78,.62)'; ctx.lineWidth=2;
+  roundRect(ctx,imageX,imageY,imageW,imageH,30); ctx.stroke();
+
+  // Bloque de pronóstico/resultado. La etiqueta de Polla/Partido vive aquí para no tapar la imagen.
+  const cardX=52,cardY=752,cardW=W-104,cardH=302;
+  ctx.fillStyle='rgba(3,12,10,.90)'; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.fill();
+  ctx.strokeStyle='rgba(242,193,78,.48)'; ctx.lineWidth=2; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.stroke();
+
+  ctx.strokeStyle='rgba(242,193,78,.34)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(W/2,786); ctx.lineTo(W/2,917); ctx.stroke();
+
+  ctx.fillStyle='#F2C14E'; ctx.font='900 31px Anton, sans-serif';
+  ctx.fillText(match.resultSubmitted?'RESULTADO':'MI PRONÓSTICO',282,800);
+  const shownScore=match.resultSubmitted?`${match.actualHome} - ${match.actualAway}`:`${mine.home} - ${mine.away}`;
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 88px Anton, sans-serif'; ctx.fillText(shownScore,282,902);
+  if(match.resultSubmitted){
+    ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='700 19px Inter, sans-serif';
+    ctx.fillText(`Mi pronóstico: ${mine.home} - ${mine.away}`,282,936);
+    ctx.fillStyle='#F2C14E'; ctx.font='900 25px Anton, sans-serif';
+    ctx.fillText(`+${mine.points??0} PUNTOS`,282,962);
+  }else{
+    ctx.fillStyle='rgba(246,243,234,.72)'; ctx.font='800 18px Inter, sans-serif';
+    fitCanvasText_(ctx,`${match.home}  ·  ${match.away}`,282,940,400,20);
+  }
+
+  ctx.fillStyle='rgba(246,243,234,.82)'; ctx.font='800 21px Inter, sans-serif';
+  ctx.fillText('PRONÓSTICO ENVIADO POR',798,807);
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 48px Anton, sans-serif';
+  fitCanvasText_(ctx,authedName||'',798,875,350,48);
+  ctx.fillStyle='#48D17A'; ctx.font='800 21px Inter, sans-serif';
+  ctx.fillText('✓ PRONÓSTICO ENVIADO',798,918);
+
+  // Polla + número de partido: fuera de la imagen y dentro del bloque inferior.
+  ctx.fillStyle='rgba(242,193,78,.06)'; roundRect(ctx,303,947,474,42,15); ctx.fill();
+  ctx.strokeStyle='rgba(242,193,78,.32)'; ctx.lineWidth=1.5; roundRect(ctx,303,947,474,42,15); ctx.stroke();
+  ctx.fillStyle='#F2C14E'; ctx.font='900 22px Anton, sans-serif';
+  ctx.fillText(`★  POLLA TICO #${currentPolla.number}  •  PARTIDO ${match.matchNumber}`,W/2,976);
+
+  // Reto limpio, sin burbuja ni fondo: solo texto y líneas decorativas sutiles.
+  ctx.strokeStyle='rgba(242,193,78,.50)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(92,1018); ctx.lineTo(288,1018); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-288,1018); ctx.lineTo(W-92,1018); ctx.stroke();
+  ctx.fillStyle='#F2C14E'; ctx.font='900 32px Anton, sans-serif';
+  ctx.fillText('¿TÚ CUÁNTO CREES QUE QUEDA?',W/2,1028);
+
+  // CTA + QR. Sin franja inferior que pueda tapar el QR.
+  const footerY=1060,qrSize=220,qrX=70,qrY=footerY+20;
+  await drawShareQR_(ctx,footerUrl,qrX,qrY,qrSize);
+
+  const textX=328;
+  ctx.textAlign='left';
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 50px Anton, sans-serif'; ctx.fillText('¿TE SUMAS?',textX,footerY+82);
+  ctx.fillStyle='rgba(246,243,234,.76)'; ctx.font='700 21px Inter, sans-serif';
+  ctx.fillText('Escanea el QR y entra a la Polla',textX,footerY+130);
+  ctx.fillStyle='#F2C14E'; ctx.font='900 28px Anton, sans-serif';
+  ctx.fillText('PRONOSTICA · COMPITE · GANA',textX,footerY+178);
+
+  if(mascot){
+    const mh=238,mw=mh*(mascot.width/mascot.height);
+    const mx=W-mw-24,my=footerY+2;
+    ctx.save(); ctx.globalAlpha=.95; ctx.drawImage(mascot,mx,my,mw,mh); ctx.restore();
+  }
+
+  return new Promise(resolve=>canvas.toBlob(blob=>resolve(blob),'image/png'));
+}
+
+function fitCanvasText_(ctx, text, x, y, maxWidth, startSize){
+  let size=startSize;
+  while(size>22){
+    ctx.font=`900 ${size}px Anton, sans-serif`;
+    if(ctx.measureText(String(text||'')).width<=maxWidth) break;
+    size-=2;
+  }
+  ctx.fillText(String(text||''),x,y);
+}
+
+async function drawShareQR_(ctx, url, x, y, size){
+  if(!url) return;
+  await ensureQRCodeLib_();
+  await new Promise(resolve=>{
+    const qrDiv=document.createElement('div');
+    qrDiv.style.position='fixed'; qrDiv.style.left='-9999px';
+    document.body.appendChild(qrDiv);
+    new QRCode(qrDiv,{text:url,width:size,height:size,colorDark:'#10202B',colorLight:'#ffffff'});
+    setTimeout(()=>{
+      const src=qrDiv.querySelector('canvas')||qrDiv.querySelector('img');
+      ctx.fillStyle='#fff'; roundRect(ctx,x-12,y-12,size+24,size+24,16); ctx.fill();
+      if(src) ctx.drawImage(src,x,y,size,size);
+      qrDiv.remove(); resolve();
+    },220);
+  });
+}
+
+async function generateShareImage(lines, footerUrl){
+  await document.fonts.load('900 60px Anton');
+  await document.fonts.load('700 30px Inter');
+  const mascot = await loadMascotImg();
+
+  const W = 1080, H = 1350;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const grad = ctx.createLinearGradient(0,0,W,H);
+  grad.addColorStop(0, '#16342A'); grad.addColorStop(1, '#0E241D');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 2;
+  for(let y = 0; y < H; y += 60){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  ctx.fillStyle = '#F2C14E';
+  ctx.font = '900 30px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('LA POLLA "TICO"', W/2, 100);
+  ctx.font = '600 22px Inter, sans-serif';
+  ctx.fillStyle = 'rgba(246,243,234,0.8)';
+  ctx.fillText('⚽ Nos divertimos y ganamos 🏆', W/2, 138);
+
+  if(mascot){
+    const mw = 300, mh = 300 * (mascot.height/mascot.width);
+    ctx.drawImage(mascot, (W-mw)/2, 168, mw, mh);
+  }
+
+  function lineAdvance(currentSize, nextSize, gap){
+    return currentSize * 0.32 + nextSize * 0.85 + gap;
+  }
+  let contentStartY = mascot ? 168 + 300*(mascot.height/mascot.width) + 36 : 260;
+  let panelHeight = 50;
+  for(let i = 0; i < lines.length; i++){
+    const cur = lines[i].size || 40;
+    const next = lines[i+1] ? (lines[i+1].size || 40) : cur;
+    const gap = lines[i].gap !== undefined ? lines[i].gap : 24;
+    panelHeight += lineAdvance(cur, next, gap);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  roundRect(ctx, 70, contentStartY, W-140, panelHeight, 24);
+  ctx.fill();
+
+  let y = contentStartY + 56 + (lines[0] ? (lines[0].size||40)*0.85 : 0);
+  lines.forEach((line, idx) => {
+    ctx.font = `${line.weight || 700} ${line.size || 40}px ${line.font || 'Inter, sans-serif'}`;
+    ctx.fillStyle = line.color || '#F6F3EA';
+    ctx.textAlign = 'center';
+    ctx.fillText(line.text, W/2, y);
+    const nextSize = lines[idx+1] ? (lines[idx+1].size || 40) : (line.size || 40);
+    const gap = line.gap !== undefined ? line.gap : 24;
+    y += lineAdvance(line.size || 40, nextSize, gap);
+  });
+
+  if(footerUrl){
+    await ensureQRCodeLib_();
+    await new Promise(resolve => {
+      const qrDiv = document.createElement('div');
+      qrDiv.style.position = 'fixed'; qrDiv.style.left = '-9999px';
+      document.body.appendChild(qrDiv);
+      new QRCode(qrDiv, {text: footerUrl, width: 220, height: 220, colorDark:'#10202B', colorLight:'#ffffff'});
+      setTimeout(() => {
+        const qrCanvas = qrDiv.querySelector('canvas');
+        const qrImg = qrDiv.querySelector('img');
+        const qrSize = 200;
+        const qx = (W - qrSize)/2, qy = H - qrSize - 86;
+        ctx.fillStyle = '#fff';
+        roundRect(ctx, qx-16, qy-16, qrSize+32, qrSize+32, 16);
+        ctx.fill();
+        if(qrCanvas) ctx.drawImage(qrCanvas, qx, qy, qrSize, qrSize);
+        else if(qrImg) ctx.drawImage(qrImg, qx, qy, qrSize, qrSize);
+        ctx.font = '600 20px Inter, sans-serif';
+        ctx.fillStyle = 'rgba(246,243,234,0.6)';
+        ctx.textAlign = 'center';
+        ctx.fillText('📲 Escanea para entrar', W/2, H-32);
+        document.body.removeChild(qrDiv);
+        resolve();
+      }, 250);
+    });
+  }
+
+  return new Promise(resolve => canvas.toBlob(blob => resolve(blob), 'image/png'));
+}
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+let pendingInviteWhatsappText_ = '';
+async function shareImageOrFallback(blob, text, filename){
+  const file = new File([blob], filename, {type:'image/png'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], text}); return; }catch(e){
+      if(e?.name === 'AbortError') return;
+    }
+  }
+
+  // Desktop / navegadores sin Web Share con archivos: descargamos la imagen,
+  // pero NO abrimos una pestaña desde un setTimeout. Eso pierde el gesto del
+  // usuario y Chrome lo interpreta como popup. El botón del modal de abajo sí
+  // nace de un toque real y por eso WhatsApp puede abrirse normalmente.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1200);
+  pendingInviteWhatsappText_ = text;
+  try{ await copyTextSafe(text); }catch(_){ }
+  openOverlay('inviteFallbackOverlay');
+}
+function openInviteWhatsappFallback_(){
+  const text = pendingInviteWhatsappText_ || '';
+  closeOverlay('inviteFallbackOverlay');
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
+}
+
+function openTutorial_(){
+  const url=String(appConfig_.tutorialUrl || DEFAULT_TUTORIAL_VIDEO_URL || '').trim();
+  if(!url){ showToast_('Tutorial todavía no disponible'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
+function applyAppConfig_(cfg){
+  if(!cfg || typeof cfg !== 'object') return;
+  appConfig_ = {
+    maintenanceEnabled: !!cfg.maintenanceEnabled,
+    maintenanceMessage: String(cfg.maintenanceMessage || ''),
+    predictionsEnabled: cfg.predictionsEnabled !== false,
+    registrationsEnabled: cfg.registrationsEnabled !== false,
+    tutorialUrl: String(cfg.tutorialUrl || appConfig_.tutorialUrl || DEFAULT_TUTORIAL_VIDEO_URL),
+    updateCheckSeconds: Math.min(900, Math.max(60, Number(cfg.updateCheckSeconds || appConfig_.updateCheckSeconds || 120)))
+  };
+  renderAppModeBanner_();
+  renderAdminConfig_();
+}
+async function refreshAppConfig_(silent=true){
+  try{
+    const cfg = silent ? await apiGetSilent('getAppConfig') : await apiGet('getAppConfig');
+    if(cfg?.ok !== false) applyAppConfig_(cfg);
+  }catch(_){ }
+}
+function renderAppModeBanner_(){
+  const bar = document.getElementById('appModeBanner');
+  if(!bar) return;
+  let text=''; let warn=false;
+  if(appConfig_.maintenanceEnabled){
+    text = '🛠️ ' + (appConfig_.maintenanceMessage || 'Mantenimiento temporal: la app está en modo solo lectura.');
+  } else if(!appConfig_.predictionsEnabled){
+    text = '⏸️ Pronósticos pausados temporalmente por el administrador.'; warn=true;
+  } else if(!appConfig_.registrationsEnabled){
+    text = '⏸️ Inscripciones pausadas temporalmente.'; warn=true;
+  }
+  bar.textContent = text;
+  bar.classList.toggle('warn', warn);
+  bar.classList.toggle('hidden', !text);
+  document.body.classList.toggle('app-mode-active', !!text);
+  if(text){
+    requestAnimationFrame(()=>{
+      const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+      document.documentElement.style.setProperty('--app-mode-offset', `${Math.max(48, h + 16)}px`);
+    });
+  } else {
+    document.documentElement.style.removeProperty('--app-mode-offset');
+  }
+}
+window.addEventListener('resize', ()=>{
+  const bar=document.getElementById('appModeBanner');
+  if(!bar || bar.classList.contains('hidden')) return;
+  const h=Math.ceil(bar.getBoundingClientRect().height || 0);
+  document.documentElement.style.setProperty('--app-mode-offset', `${Math.max(48, h + 16)}px`);
+});
+
+function renderAdminConfig_(){
+  const maintenance=document.getElementById('cfgMaintenance');
+  const predictions=document.getElementById('cfgPredictions');
+  const registrations=document.getElementById('cfgRegistrations');
+  const message=document.getElementById('cfgMaintenanceMessage');
+  const status=document.getElementById('cfgStatusText');
+  if(!maintenance || !predictions || !registrations || !message) return;
+  maintenance.checked=!!appConfig_.maintenanceEnabled;
+  predictions.checked=!!appConfig_.predictionsEnabled;
+  registrations.checked=!!appConfig_.registrationsEnabled;
+  message.value=appConfig_.maintenanceMessage || '';
+  if(status) status.textContent = appConfig_.maintenanceEnabled ? '🔒 Jugadores en solo lectura' : (!appConfig_.predictionsEnabled ? '⏸️ Pronósticos pausados' : (!appConfig_.registrationsEnabled ? '⏸️ Inscripciones pausadas' : '✅ Operación normal'));
+}
+function playerActionBlocked_(kind='prediction'){
+  if(appConfig_.maintenanceEnabled){
+    alert(appConfig_.maintenanceMessage || 'La app está temporalmente en modo solo lectura.');
+    return true;
+  }
+  if(kind==='prediction' && !appConfig_.predictionsEnabled){
+    alert('Los pronósticos están pausados temporalmente.');
+    return true;
+  }
+  if(kind==='registration' && !appConfig_.registrationsEnabled){
+    alert('Las inscripciones están pausadas temporalmente.');
+    return true;
+  }
+  return false;
+}
+
+async function saveAppConfig_(){
+  if(!hasValidAdminSession_() && !(await renewAdminSession_())) return;
+  const maintenance=!!document.getElementById('cfgMaintenance')?.checked;
+  const predictions=!!document.getElementById('cfgPredictions')?.checked;
+  const registrations=!!document.getElementById('cfgRegistrations')?.checked;
+  const maintenanceMessage=String(document.getElementById('cfgMaintenanceMessage')?.value || '').trim();
+  if((maintenance || !predictions) && !confirm('Este cambio limitará acciones de los jugadores. ¿Guardar el control operativo?')) return;
+  const result=await apiPost({action:'setAppConfig', maintenanceEnabled:maintenance, maintenanceMessage, predictionsEnabled:predictions, registrationsEnabled:registrations, adminName});
+  if(!result?.ok){ alert(result?.error || 'No se pudo guardar el control operativo.'); return; }
+  applyAppConfig_(result.config || {maintenanceEnabled:maintenance,maintenanceMessage,predictionsEnabled:predictions,registrationsEnabled:registrations});
+  showToast_('✅ Control operativo actualizado');
+}
+
+/* ============ LANDING ============ */
+async function initLanding(){
+  renderAppModeBanner_();
+  void refreshAppConfig_(true);
+  const container = document.getElementById('pollasContainer');
+  container.innerHTML = '<div class="loading-msg">Cargando...</div>';
+  try{
+    const loaded = await apiGet('getPollas', {scope:'landing'});
+    if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'Respuesta inválida del servidor');
+    allPollas = loaded;
+    allPollasLoadedAt_ = Date.now();
+    allPollasScope_ = 'landing';
+    landingLoadFailed_ = false;
+    renderLanding();
+
+    if(landingTimer) clearInterval(landingTimer);
+    landingTimer = setInterval(updateLandingCountdowns, 30000);
+
+    // Si la URL recuerda una Polla (por refresh o enlace compartido), volver a ella.
+    if(incomingPollaId){
+      const requestedId = incomingPollaId;
+      const target = allPollas.find(p => String(p.id) === String(requestedId));
+      if(target){
+        incomingPollaId = '';
+        await enterPolla(target.id, true);
+      } else {
+        // La Polla ya no existe / no está disponible: volvemos a portada sin romper la app.
+        incomingPollaId = '';
+        history.replaceState(null, '', location.pathname);
+        document.getElementById('landingScreen').classList.remove('hidden');
+        showToast_('La Polla solicitada ya no está disponible.');
+      }
+    }
+  }catch(err){
+    landingLoadFailed_ = true;
+    document.getElementById('landingScreen').classList.remove('hidden');
+    container.innerHTML = `
+      <div class="no-pollas">
+        <div style="font-size:34px;margin-bottom:8px">📡</div>
+        <b>No se pudieron cargar las Pollas.</b><br>
+        <span style="opacity:.78">Revisa tu conexión a Internet.</span><br>
+        <button class="submit-btn secondary" style="margin-top:14px" onclick="initLanding()">🔄 Reintentar</button>
+      </div>`;
+  }
+}
+// Refresca los "Cierre de inscripciones en..." de la lista de Pollas sin recargar
+// toda la tarjeta, igual que updateCountdowns hace con los partidos abiertos.
+function updateLandingCountdowns(){
+  document.querySelectorAll('#pollasContainer [data-startdate]').forEach(el => {
+    const sl = startLabel(el.dataset.startdate);
+    el.textContent = sl.text;
+    el.classList.toggle('soon', sl.soon);
+  });
+}
+function renderLanding(){
+  const container = document.getElementById('pollasContainer');
+  const actuales = allPollas.filter(p => p.status === 'actual');
+  const proximas = allPollas.filter(p => p.status === 'proximamente');
+  let html = '';
+  actuales.forEach(p => {
+    const matchesLabel = p.totalMatches ? `<b>${p.matchCount} / ${escapeHtml(p.totalMatches)}</b> partidos` : `<b>${p.matchCount}</b> partidos`;
+    html += `
+      <div class="polla-card" onclick="enterPolla('${p.id}')">
+        <div class="logo-third">${p.imageUrl ? `<img src="${p.imageUrl}" alt="Logo" loading="lazy" decoding="async" onerror="this.style.display='none'">` : `<div class="no-logo">${ICON_BALL.replace('class="stat-icon"','')}</div>`}</div>
+        <div class="card-body">
+          <span class="status-pill actual">Activa</span>
+          ${p.isFreePolla ? '<span class="status-pill free-pill">🎁 Gratuita · solo clasificados</span>' : ''}
+          <h2># ${escapeHtml(p.number)}</h2>
+          ${p.startDate ? (() => { const sl = startLabel(p.startDate); return `<div class="start-date${sl.soon ? ' soon' : ''}" data-startdate="${p.startDate}">${sl.text}</div>`; })() : ''}
+          <div class="stats">
+            <div class="stat-item">${ICON_PEOPLE}<b>${p.participantCount}</b> participantes</div>
+            <div class="stat-item">${ICON_BALL}${matchesLabel}</div>
+          </div>
+          <div class="enter">Entrar a pronosticar</div>
+        </div>
+      </div>`;
+  });
+  proximas.forEach(p => {
+    const startInfo = p.startDate ? (() => { const sl = startLabel(p.startDate); return `<div class="start-date${sl.soon ? ' soon' : ''}" data-startdate="${p.startDate}">${sl.text}</div>`; })() : '';
+    html += `<div class="upcoming-card"><b>Próximamente</b>Polla "TICO" # ${escapeHtml(p.number)}, muy pronto podrás participar${startInfo}</div>`;
+  });
+  if(actuales.length === 0 && proximas.length === 0) html = '<div class="no-pollas">Todavía no hay ninguna Polla activa.<br>Vuelve pronto.</div>';
+  container.innerHTML = html;
+}
+function goToLanding(fromHistory_=false){
+  if(!confirmDiscardUnsaved_()) return;
+  dirtyPredictionIds_.clear();
+  if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
+  document.getElementById('appScreen').classList.add('hidden');
+  document.getElementById('landingScreen').classList.remove('hidden');
+  // UX: el botón explícito “Inicio” lleva al comienzo de la portada.
+  // En cambio, el botón Atrás del navegador/PWA restaura la posición previa,
+  // que es lo natural cuando el usuario solo quiere volver al punto donde estaba explorando.
+  const landingTargetY_ = fromHistory_ ? landingScrollY_ : 0;
+  requestAnimationFrame(() => window.scrollTo({top: landingTargetY_, left: 0, behavior: 'auto'}));
+  currentPolla = null; matches = []; predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:null,data:null,at:0}; collapsedDateGroups.clear(); collapsedAdminGroups.clear(); authedName = null; authedPin = null; myReferralCode = null;
+  selectedBulkMatches.clear();
+  document.getElementById('streakBadge').classList.add('hidden');
+  document.getElementById('miniLeaderboard').classList.add('hidden');
+  if(!fromHistory_) history.replaceState({view:'landing'}, '', location.pathname);
+  if(Array.isArray(allPollas) && allPollas.length){
+    renderLanding();
+    if(landingTimer) clearInterval(landingTimer);
+    landingTimer = setInterval(updateLandingCountdowns, 30000);
+  } else {
+    initLanding();
+  }
+}
+window.addEventListener('popstate', (event) => {
+  const params = new URLSearchParams(location.search);
+  const pollaId = params.get('polla');
+  if(currentPolla && !pollaId){
+    if(!confirmDiscardUnsaved_()){
+      const backUrl = new URL(location.href);
+      backUrl.searchParams.set('polla', currentPolla.id);
+      history.pushState({view:'polla', pollaId:currentPolla.id}, '', backUrl.pathname + '?' + backUrl.searchParams.toString());
+      return;
+    }
+    goToLanding(true);
+    return;
+  }
+  if(!currentPolla && pollaId){
+    enterPolla(pollaId, true).catch(()=>{});
+  }
+});
+
+function pollaLifecycle_(p=currentPolla){
+  if(window.TicoCore?.classifyPolla) return window.TicoCore.classifyPolla(p);
+  const compacted=!!(p?.compactedAt||p?.compacted_at);
+  const finished=String(p?.status||'').toLowerCase()==='finalizada'||p?.isArchived===true||p?.is_archived===true;
+  return compacted?{key:'COMPACTED'}:(finished?{key:'FINAL_REVIEW'}:{key:'ACTIVE'});
+}
+function isHistoricalReadOnlyPolla_(){ return pollaLifecycle_().key==='COMPACTED'; }
+function isFinalReviewPolla_(){ return pollaLifecycle_().key==='FINAL_REVIEW'; }
+function applyHistoricalReadOnlyUI_(){
+  const lifecycle=pollaLifecycle_();
+  const compacted=lifecycle.key==='COMPACTED';
+  const finalReview=lifecycle.key==='FINAL_REVIEW';
+  const nameCard=document.querySelector('#appScreen .name-card');
+  const statusRow=document.querySelector('#appScreen .status-row');
+  const subtitle=document.querySelector('#appScreen header .subtitle');
+  // Solo la compactación retira definitivamente el acceso de jugador.
+  nameCard?.classList.toggle('hidden',compacted);
+  statusRow?.classList.toggle('hidden',compacted);
+  document.getElementById('payPendingBanner')?.classList.toggle('hidden',compacted || document.getElementById('payPendingBanner')?.classList.contains('hidden'));
+  document.getElementById('pinLockedBox')?.classList.add('hidden');
+  if(compacted){
+    document.getElementById('playerControlsRow')?.classList.add('hidden');
+    document.getElementById('predictionProgress')?.classList.remove('show');
+    document.getElementById('bulkBar')?.classList.add('hidden');
+    if(subtitle) subtitle.textContent='Histórico protegido · solo lectura';
+  }else if(finalReview){
+    if(subtitle) subtitle.textContent='Polla finalizada · ingresa para revisar tus resultados';
+  }else if(subtitle){
+    subtitle.textContent='Marca el resultado antes de que cierre el partido';
+  }
+}
+
+async function enterPolla(pollaId, restoreFromUrl=false){
+  if(landingTimer){ clearInterval(landingTimer); landingTimer = null; }
+  // C3: ocultamos de inmediato cualquier progreso pintado por la Polla/sesión
+  // anterior, incluso antes de resolver un enlace directo desde el backend.
+  document.getElementById('predictionProgress')?.classList.remove('show');
+  currentPolla = allPollas.find(p => String(p.id) === String(pollaId));
+  if(!currentPolla){
+    // C2: si venimos por enlace directo o desde "Pollas anteriores", pedimos
+    // solo ESTA Polla en lugar de descargar el histórico completo.
+    const fetched = await apiGet('getPollaSummary', {pollaId}).catch(()=>null);
+    if(fetched && fetched.id){
+      currentPolla = fetched;
+      if(!allPollas.some(p => String(p.id) === String(fetched.id))) allPollas.push(fetched);
+    }
+  }
+  // H4: compactedAt ya llega en los resúmenes SQL; evitamos una segunda
+  // petición al abrir una Polla finalizada.
+  if(!currentPolla){
+    history.replaceState(null, '', location.pathname);
+    await initLanding();
+    showToast_('La Polla solicitada ya no está disponible.');
+    return;
+  }
+
+  // Mantener la Polla actual en la URL y crear una entrada real de historial.
+  // Así el botón/gesto Atrás vuelve primero a Inicio en vez de sacar al usuario de la app.
+  const url = new URL(location.href);
+  url.searchParams.set('polla', currentPolla.id);
+  url.searchParams.delete('ref');
+  const pollaUrl_ = url.pathname + '?' + url.searchParams.toString();
+  if(restoreFromUrl){
+    if(history.state?.view === 'polla'){
+      history.replaceState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    } else {
+      history.replaceState({view:'landing'}, '', location.pathname);
+      history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    }
+  } else {
+    if(history.state?.view !== 'landing') history.replaceState({view:'landing'}, '', location.pathname);
+    history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+  }
+
+  // Mientras aún no conocemos los partidos no mostramos una pestaña activa ficticia.
+  // Evita el flash visual "Por jugar" -> "Resueltos" al entrar a una Polla
+  // que ya no tiene nada pendiente.
+  matchesView_ = currentPolla.status === 'finalizada' ? 'resolved' : 'upcoming';
+  const matchesTabsBeforeLoad_ = document.getElementById('matchesViewTabs');
+  if(matchesTabsBeforeLoad_) matchesTabsBeforeLoad_.style.visibility = 'hidden';
+
+  predictionsCache = {}; adminPredictionsCache = {}; adminPredictionSummaryCache = {}; adminPredictionSummaryPollaId = null; predictionTrendsCache = {}; predictionTrendsLoadedMatches.clear(); participantsCache = []; participantsCachePollaId = null; participantsCacheAt = 0; standingsCache = {pollaId:currentPolla?.id||null,data:null,at:0}; selectedBulkMatches.clear();
+  // Al entrar desde Inicio recordamos dónde estaba el usuario para poder devolverlo ahí.
+  // La Polla, en cambio, siempre comienza arriba; no hereda el scroll de la pantalla principal.
+  if(!restoreFromUrl) landingScrollY_ = window.scrollY || window.pageYOffset || 0;
+  document.getElementById('landingScreen').classList.add('hidden');
+  document.getElementById('appScreen').classList.remove('hidden');
+  requestAnimationFrame(() => {
+    const appTop = document.getElementById('appScreen')?.offsetTop || 0;
+    window.scrollTo({top: appTop, left: 0, behavior: 'auto'});
+  });
+  document.getElementById('pollaTitle').textContent = `Polla "TICO" # ${currentPolla.number}`;
+  document.getElementById('adminModalTitle').textContent = `Administrar Polla # ${currentPolla.number}`;
+  // 🏆 El botón de Ganadores aparece en dos casos independientes:
+  // 1) La Polla ya está 'finalizada' → siempre visible, permanentemente
+  //    (lógica original, no cambia).
+  // 2) El admin activó "showWinnersLive" → visible YA, calculado en vivo
+  //    contra la tabla de posiciones actual de esta Polla (showWinners ya
+  //    usa getStandings, que siempre trae el estado más reciente, así que
+  //    no hace falta ningún cálculo nuevo: solo se destraba la visibilidad).
+  //    Si el admin lo desactiva antes de finalizar, el botón se vuelve a
+  //    ocultar (a menos que la Polla ya esté finalizada).
+  updateWinnersButtonVisibility();
+  document.getElementById('playerName').value = isHistoricalReadOnlyPolla_() ? '' : lastPlayerName_();
+  resetAuthUI();
+  applyHistoricalReadOnlyUI_();
+  await loadMatches();
+  if(countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = setInterval(updateCountdowns, 30000);
+}
+function updateCountdowns(){
+  let needsRerender = false;
+  document.querySelectorAll('[data-closeat]').forEach(el => {
+    const iso = el.dataset.closeat;
+    if(isClosed(iso)){ needsRerender = true; return; } // pasó a "cerrado" desde el último chequeo
+    const label = fmtCountdown(iso);
+    if(label){ el.textContent = label; el.classList.toggle('soon', (new Date(iso)-new Date()) < 3600000); }
+  });
+  // Si algún partido acaba de cerrar, reconstruimos las tarjetas para que se vea
+  // "Cerró" y se bloqueen los inputs de una vez, sin esperar a salir y volver a entrar.
+  if(needsRerender) renderMatches();
+}
+
+/* ============ POLLAS ANTERIORES / GANADORES ============ */
+// 📄 C2: paginación REAL contra el backend. Al abrir "Pollas anteriores" solo
+// llegan 5 registros; "Ver más" pide las siguientes 5. La portada ya no carga
+// todo el histórico innecesariamente.
+const ARCHIVED_PAGE_SIZE_ = 5;
+let archivedPollasAll_ = [];
+let archivedPollasTotal_ = 0;
+let archivedPollasHasMore_ = false;
+
+async function openArchivedPollas(){
+  if(busyFlags.archived) return;
+  busyFlags.archived = true;
+  openOverlay('archivedOverlay');
+  document.getElementById('archivedList').innerHTML = '<p class="hint">Cargando...</p>';
+  try{
+    const page = await apiGet('getArchivedPollas', {limit:ARCHIVED_PAGE_SIZE_, offset:0});
+    archivedPollasAll_ = Array.isArray(page?.items) ? page.items : [];
+    archivedPollasTotal_ = Number(page?.total || archivedPollasAll_.length);
+    archivedPollasHasMore_ = !!page?.hasMore;
+    renderArchivedPollasList_();
+  } catch(_){
+    document.getElementById('archivedList').innerHTML = '<p class="hint">No se pudieron cargar las Pollas anteriores.</p>';
+  } finally { busyFlags.archived = false; }
+}
+function renderArchivedPollasList_(){
+  const list = document.getElementById('archivedList');
+  if(archivedPollasAll_.length === 0){ list.innerHTML = '<p class="hint">Todavía no hay Pollas finalizadas.</p>'; return; }
+  let html = archivedPollasAll_.map(p => `
+    <div class="archived-item" onclick="enterArchivedPolla_('${p.id}')">
+      <div><b>Polla "TICO" # ${escapeHtml(p.number)}</b><div class="hint">${p.participantCount} participantes · ${p.matchCount} partidos</div></div>
+      <div>›</div>
+    </div>`).join('');
+  if(archivedPollasHasMore_){
+    html += `<button id="archivedMoreBtn" class="btn-secondary" style="margin-top:10px;" onclick="showMoreArchivedPollas_()">Ver más</button>`;
+  }
+  list.innerHTML = html;
+}
+async function showMoreArchivedPollas_(){
+  if(busyFlags.archivedMore || !archivedPollasHasMore_) return;
+  busyFlags.archivedMore = true;
+  const btn = document.getElementById('archivedMoreBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Cargando...'; }
+  try{
+    const page = await apiGet('getArchivedPollas', {limit:ARCHIVED_PAGE_SIZE_, offset:archivedPollasAll_.length});
+    const incoming = Array.isArray(page?.items) ? page.items : [];
+    const known = new Set(archivedPollasAll_.map(p=>String(p.id)));
+    incoming.forEach(p=>{ if(!known.has(String(p.id))) archivedPollasAll_.push(p); });
+    archivedPollasTotal_ = Number(page?.total || archivedPollasTotal_);
+    archivedPollasHasMore_ = !!page?.hasMore;
+    renderArchivedPollasList_();
+  } catch(_){
+    showToast_('No se pudieron cargar más Pollas. Intenta otra vez.');
+    renderArchivedPollasList_();
+  } finally { busyFlags.archivedMore = false; }
+}
+async function enterArchivedPolla_(pollaId){
+  const p = archivedPollasAll_.find(x => String(x.id) === String(pollaId));
+  if(p && !allPollas.some(x => String(x.id) === String(p.id))) allPollas.push(p);
+  closeOverlay('archivedOverlay');
+  await enterPolla(pollaId);
+}
+
+function groupPodium(standings){
+  // Si nadie sumó puntos, no existe un podio deportivo ni campeón histórico.
+  // Esto mantiene la UI alineada con el backend, que tampoco registra títulos
+  // cuando el puntaje máximo es 0.
+  if(!Array.isArray(standings) || standings.length===0 || Number(standings[0].totalPoints||0)<=0) return [];
+  const top = [];
+  let medalIdx = 0;
+  let i = 0;
+  while(i < standings.length && medalIdx < 3){
+    const pts = standings[i].totalPoints;
+    const group = standings.filter((s,idx) => idx >= i && s.totalPoints === pts);
+    group.forEach(g => top.push({...g, medalIdx}));
+    i += group.length;
+    medalIdx++;
+  }
+  return top;
+}
+function computeCompetitionRanks(standings){
+  const ranks = [];
+  let i = 0;
+  while(i < standings.length){
+    const pts = standings[i].totalPoints;
+    let j = i;
+    while(j < standings.length && standings[j].totalPoints === pts) j++;
+    for(let k = i; k < j; k++) ranks[k] = i;
+    i = j;
+  }
+  return ranks;
+}
+function sharedPrizeText(prize, count){
+  const raw = String(prize || 'Premio no definido').trim();
+  if(count <= 1) return raw;
+  let m = raw.match(/(?:S\/\s*|S\.?\s*)(\d+(?:[.,]\d+)?)/i);
+  if(m){ const value=parseFloat(m[1].replace(',','.')); return `${raw} → S/${(value/count).toFixed(2).replace('.00','')} c/u (${count} empatados)`; }
+  m = raw.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  if(m){ const value=parseFloat(m[1].replace(',','.')); return `${raw} → ${(value/count).toFixed(2).replace(/\.00$/,'')}% c/u (${count} empatados)`; }
+  return `${raw} · Premio compartido entre ${count}; distribución a cargo del Admin.`;
+}
+
+async function showWinners(pollaId){
+  if(busyFlags.winners) return;
+  busyFlags.winners = true;
+  openOverlay('winnersOverlay');
+  document.getElementById('winnersList').innerHTML = '<p class="hint">Cargando...</p>';
+  try{
+    const polla = allPollas.find(p => String(p.id) === String(pollaId)) || await apiGet('getPollaSummary',{pollaId});
+    const standings = await apiGet('getStandings', {pollaId}).catch(()=>[]);
+    document.getElementById('winnersTitle').textContent = `Ganadores · Polla # ${polla.number}`;
+    const medals = ['🥇','🥈','🥉'];
+    const premios = [polla.premio1, polla.premio2, polla.premio3];
+    const podium = groupPodium(standings);
+    const list = document.getElementById('winnersList');
+    if(podium.length === 0){ list.innerHTML = '<p class="hint">No hubo pronósticos registrados en esta Polla.</p>'; }
+    else{
+      const groupCounts = podium.reduce((a,s)=>{a[s.medalIdx]=(a[s.medalIdx]||0)+1;return a;},{});
+      list.innerHTML = podium.map(s => `
+        <div class="prize-row">
+          <div class="prize-medal">${medals[s.medalIdx]}</div>
+          <div><div class="prize-place">${escapeHtml(s.name)} · ${s.totalPoints} pts</div><div class="prize-text">${escapeHtml(sharedPrizeText(premios[s.medalIdx], groupCounts[s.medalIdx] || 1))}</div></div>
+        </div>`).join('');
+    }
+  } finally { busyFlags.winners = false; }
+}
+
+/* ============ AUTENTICACIÓN ============ */
+function resetAuthUI(){
+  authedName = null; authedPin = null; myReferralCode = null;
+  document.getElementById('nameField').classList.remove('authed');
+  document.getElementById('nameStatus').textContent = '';
+  document.getElementById('nameStatus').className = 'name-status';
+  document.getElementById('streakBadge').classList.add('hidden');
+  document.getElementById('pinLockedBox').classList.add('hidden');
+  document.getElementById('playerControlsRow').classList.add('hidden');
+  document.getElementById('bulkToggleRow').classList.remove('hidden');
+  document.getElementById('setSecurityAnswerBtn').classList.add('hidden');
+  myWhatsapp_ = '';
+  hasSecurityAnswer_ = false;
+  document.getElementById('payPendingBanner').classList.add('hidden');
+  document.getElementById('myReferralCodeBox').classList.add('hidden');
+  // C3: nunca conservar visualmente el progreso de una sesión anterior.
+  // Al salir y volver a entrar, la barra solo puede reaparecer DESPUÉS de
+  // autenticar al jugador y cargar sus pronósticos reales.
+  const progressBox = document.getElementById('predictionProgress');
+  if(progressBox) progressBox.classList.remove('show');
+  const progressText = document.getElementById('predictionProgressText');
+  if(progressText) progressText.textContent = '';
+  const progressFill = document.getElementById('predictionProgressFill');
+  if(progressFill) progressFill.style.width = '0%';
+  const progressNext = document.getElementById('nextPendingPredictionBtn');
+  if(progressNext) progressNext.classList.add('hidden');
+}
+function retryAfterLock(){ document.getElementById('pinLockedBox').classList.add('hidden'); }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('playerName');
+  if(input){
+    input.addEventListener('input', () => {
+      if(input.value.trim() === ''){ resetAuthUI(); renderMatches(); }
+      else if(authedName && normalizeName(authedName) !== normalizeName(input.value)){ resetAuthUI(); renderMatches(); }
+    });
+    input.addEventListener('keydown', (ev) => { if(ev.key === 'Enter'){ ev.preventDefault(); checkName(); } });
+  }
+});
+
+// Limpia el "Verificando..." (o cualquier estado previo) del campo de nombre.
+// Se usa cada vez que un flujo de inscripción termina en un error definitivo
+// (inscripciones cerradas, no clasificado, etc.) para que no se quede pegado
+// un mensaje de carga que ya no corresponde a nada.
+function clearNameStatus_(){
+  const statusEl = document.getElementById('nameStatus');
+  statusEl.textContent = '';
+  statusEl.className = 'name-status';
+}
+
+// 🔎 Chequeo LOCAL (sin llamar al servidor) de si esta Polla todavía admite
+// inscripciones nuevas, usando el startDate que ya trae currentPolla desde
+// getPollas. Es un adelanto del mismo chequeo que hace el backend en
+// assertCanEnroll_: no reemplaza esa validación (que sigue siendo la que de
+// verdad manda), pero permite avisarle a alguien completamente nuevo que las
+// inscripciones ya cerraron ANTES de hacerle escribir su PIN y su nombre de
+// nuevo, en vez de recién decírselo al final de todo el proceso.
+function enrollmentClosedLocally_(){
+  if(!currentPolla || !currentPolla.startDate) return false;
+  const start = new Date(String(currentPolla.startDate).length <= 10 ? currentPolla.startDate + 'T00:00:00' : currentPolla.startDate);
+  return new Date() >= start;
+}
+
+// 🎁 Chequeo LOCAL (sin reemplazar la validación real del backend, que sigue
+// siendo assertCanEnroll_) para la Polla gratuita: si el nombre todavía no es
+// participante de esta Polla y hoy no está clasificado en la tabla acumulada,
+// avisamos de una vez, sin hacerlo pasar por PIN, nombre de registro, etc.
+// Si ya es participante de esta Polla, nunca se bloquea (mismo criterio que
+// assertCanEnroll_ en el servidor).
+async function isBlockedFromFreePolla_(name){
+  try{
+    const [participants, stats] = await Promise.all([
+      apiGet('getParticipants', {pollaId: currentPolla.id}),
+      apiGet('getFreeContestStats')
+    ]);
+    const key = normalizeName(name);
+    if(participants.some(p => normalizeName(p.name) === key)) return false;
+    return !stats.qualifiedNames.some(n => normalizeName(n) === key);
+  } catch(err){
+    return false; // si falla la consulta, seguimos el flujo normal (el backend igual valida al final)
+  }
+}
+
+function clearAccessBlocks(){
+  ['accessPinBlock','accessActivationBlock','accessRegisterBlock','accessRecoveryBlock'].forEach(id=>document.getElementById(id).classList.add('hidden'));
+  document.getElementById('playerAccessError').textContent='';
+}
+function showAccessMode(mode){
+  clearAccessBlocks();
+  if(mode==='PIN') document.getElementById('accessPinBlock').classList.remove('hidden');
+  if(mode==='ACTIVATE') document.getElementById('accessActivationBlock').classList.remove('hidden');
+  if(mode==='REGISTER') document.getElementById('accessRegisterBlock').classList.remove('hidden');
+  if(mode==='RECOVERY') document.getElementById('accessRecoveryBlock').classList.remove('hidden');
+}
+function accessError(msg){ const el=document.getElementById('playerAccessError'); el.textContent=msg||''; }
+
+async function checkName(){
+  if(isHistoricalReadOnlyPolla_()){ showToast_('Esta Polla está finalizada. El histórico es solo de consulta.'); return; }
+  if(busyFlags.checkName) return;
+  const name=document.getElementById('playerName').value.trim();
+  const statusEl=document.getElementById('nameStatus');
+  if(!name){ statusEl.textContent='Escribe tu nombre primero.'; statusEl.className='name-status err'; return; }
+  busyFlags.checkName=true;
+  const btn=document.querySelector('.check-btn'); btn.disabled=true; btn.textContent='…';
+  statusEl.textContent='Verificando...'; statusEl.className='name-status';
+  try{
+    const result=await apiPost({action:'checkName',pollaId:currentPolla.id,name});
+    if(!result.ok){
+      if(result.error==='POLLA_COMPACTADA'){ statusEl.textContent='Esta Polla ya está compactada y se consulta sin iniciar sesión.'; statusEl.className='name-status err'; return; }
+      statusEl.textContent=result.error||'No se pudo verificar.'; statusEl.className='name-status err'; return;
+    }
+    pendingAccessName=result.realName||name; pendingAccessState=result;
+    document.getElementById('playerAccessTitle').textContent=`Hola, ${pendingAccessName}`;
+    if(result.state==='EXISTING'){
+      document.getElementById('playerAccessIcon').textContent='🔐';
+      document.getElementById('playerAccessHint').textContent='Ingresa tu PIN de siempre.';
+      document.getElementById('accessPinInput').value=''; showAccessMode('PIN');
+    }else if(result.state==='PENDING_ACTIVATION'){
+      document.getElementById('playerAccessIcon').textContent='🔑';
+      document.getElementById('playerAccessHint').textContent='Manolo ya te agregó. Usa el código que te brindó y crea tu PIN.';
+      document.getElementById('activationCodeInput').value=''; document.getElementById('activationPinInput').value=''; showAccessMode('ACTIVATE');
+    }else{
+      if(result.canRegister===false){
+        statusEl.textContent='';
+        const messages={INSCRIPCIONES_CERRADAS:'Las inscripciones para esta Polla ya cerraron.',POLLA_FINALIZADA:'Esta Polla ya finalizó. Solo pueden ingresar quienes ya participaron para revisar sus resultados.',NOT_QUALIFIED:'Esta Polla Gratuita es exclusiva para quienes están clasificados hoy en la Tabla Acumulada.'};
+        alert(messages[result.reason]||result.reason||'No puedes registrarte en esta Polla.'); return;
+      }
+      document.getElementById('playerAccessIcon').textContent='📝';
+      document.getElementById('playerAccessHint').textContent='No tienes una cuenta con este nombre. Puedes registrarte ahora.';
+      document.getElementById('registerNameInput').value=name; document.getElementById('registerPinInput').value='';
+      document.getElementById('registerReferralInput').value=incomingRefCode||'';
+      document.getElementById('registerWhatsappInput').value='';
+      document.getElementById('registerReferralWrap').style.display=currentPolla?.isFreePolla?'none':'';
+      showAccessMode('REGISTER');
+    }
+    openOverlay('playerAccessOverlay'); statusEl.textContent='';
+  }finally{ busyFlags.checkName=false; btn.disabled=false; btn.textContent='✓'; }
+}
+
+async function finishPlayerAccessWithoutJump_(runner){
+  // Al confirmar identidad no forzamos al usuario hacia ningún partido.
+  // Conservamos su posición visual aunque renderMatches reconstruya el contenido.
+  const y = window.scrollY;
+  await runner();
+  requestAnimationFrame(() => window.scrollTo({top:y, left:0, behavior:'auto'}));
+}
+
+async function submitExistingLogin(){
+  const pin=document.getElementById('accessPinInput').value.trim();
+  if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
+  const result=await apiPost({action:'authName',pollaId:currentPolla.id,name:pendingAccessName,pin});
+  if(!result.ok){
+    if(result.error==='WRONG_PIN'){ accessError('PIN incorrecto. Puedes reintentarlo, recuperar tu PIN o indicar que eres otra persona.'); return; }
+    if(result.error==='NEEDS_ACTIVATION'){ showAccessMode('ACTIVATE'); accessError('Esta cuenta necesita un código de activación.'); return; }
+    if(result.error==='NOT_QUALIFIED'){accessError('No estás clasificado actualmente para esta Polla Gratuita.');return;}
+    if(result.error==='INSCRIPCIONES_CERRADAS'){accessError('Las inscripciones cerraron y todavía no estabas inscrito en esta Polla.');return;}
+    if(result.error==='POLLA_FINALIZADA'){accessError('Esta Polla ya finalizó y este jugador no participó en ella.');return;}
+    if(result.error==='POLLA_COMPACTADA'){accessError('Esta Polla ya está compactada y se consulta como histórico protegido.');return;}
+    accessError(result.error||'No se pudo ingresar.'); return;
+  }
+  closeOverlay('playerAccessOverlay');
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),result.registered,false,result.newInThisPolla,result.needsSecurityAnswer,result.referralCode));
+}
+
+async function submitActivation(){
+  const code=document.getElementById('activationCodeInput').value.trim();
+  const pin=document.getElementById('activationPinInput').value.trim();
+  if(!code){accessError('Ingresa el código que te brindó Manolo.');return;}
+  if(!/^\d{4}$/.test(pin)){accessError('Tu nuevo PIN debe tener 4 números.');return;}
+  const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin});
+  if(!result.ok){accessError(result.error==='CODIGO_ACTIVACION_INVALIDO'?'El código de activación no es correcto.':result.error);return;}
+  closeOverlay('playerAccessOverlay');
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,false,false,result.needsSecurityAnswer,result.referralCode));
+}
+
+async function submitNewRegistration(){
+  if(playerActionBlocked_('registration')) return;
+  const name=document.getElementById('registerNameInput').value.trim();
+  const pin=document.getElementById('registerPinInput').value.trim();
+  const ref=currentPolla?.isFreePolla?'':document.getElementById('registerReferralInput').value.trim().toUpperCase();
+  const whatsapp=document.getElementById('registerWhatsappInput').value.trim();
+  if(!name){accessError('Escribe el nombre con el que quieres participar.');return;}
+  if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
+  const whatsappDigits=whatsapp.replace(/\D/g,'');
+  if(whatsapp && (whatsappDigits.length<7 || whatsappDigits.length>15)){
+    accessError('Ingresa un WhatsApp/teléfono válido o déjalo vacío.');
+    return;
+  }
+  const result=await apiPost({action:'selfRegister',pollaId:currentPolla.id,name,pin,referredByCode:ref,whatsapp});
+  if(!result.ok){
+    const msgs={DUPLICATE_NAME:'Ese nombre ya está ocupado. Usa otro nombre o apodo.',CODIGO_INVALIDO:'El código de invitación no existe.',NEEDS_ACTIVATION:'Ese nombre ya fue reservado por el Admin. Usa su código de activación.',WRONG_PIN:'Ese nombre ya pertenece a otro jugador. Usa otro nombre.'};
+    accessError(msgs[result.error]||result.error||'No se pudo completar el registro.'); return;
+  }
+  incomingRefCode=''; closeOverlay('playerAccessOverlay');
+  await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,true,false,result.needsSecurityAnswer,result.referralCode));
+}
+
+function openRecoveryMode(){
+  const configured = confirm('¿Configuraste anteriormente tu recuperación de PIN?\n\n✅ Aceptar → Sí, la configuré\n❌ Cancelar → No, nunca la configuré');
+  if(!configured){
+    accessError('Para recuperar tu acceso, comunícate con Manolo para que resetee tu PIN. Después podrás crear uno nuevo sin perder tus puntos, pronósticos ni historial.');
+    return;
+  }
+  // La respuesta del usuario solo decide el camino de la interfaz. La seguridad
+  // real sigue dependiendo del servidor y de que exista una respuesta secreta válida.
+  if(!pendingAccessState?.hasSecurityAnswer){
+    accessError('No encontramos una recuperación configurada para esta cuenta. Comunícate con Manolo para que resetee tu PIN.');
+    return;
+  }
+  document.getElementById('recoveryAnswerInput').value='';
+  document.getElementById('recoveryPinInput').value='';
+  showAccessMode('RECOVERY');
+}
+async function submitRecoveryFromModal(){
+  if(playerActionBlocked_('account')) return;
+  const answer=document.getElementById('recoveryAnswerInput').value.trim(); const pin=document.getElementById('recoveryPinInput').value.trim();
+  if(!answer){accessError('Escribe tu respuesta de seguridad.');return;} if(!/^\d{4}$/.test(pin)){accessError('El nuevo PIN debe tener 4 números.');return;}
+  const result=await apiPost({action:'selfResetPin',name:pendingAccessName,securityAnswer:answer,newPin:pin});
+  if(!result.ok){
+    if(result.error==='RECOVERY_LOCKED'){accessError(`Demasiados intentos de recuperación desde este dispositivo/origen. Intenta nuevamente en ${result.minutesLeft||5} min.`);return;}
+    accessError(result.error==='RESPUESTA_INCORRECTA'?`Respuesta incorrecta${result.attemptsLeft!==undefined?` · quedan ${result.attemptsLeft} intento(s)`:''}.`:result.error); return;
+  }
+  showAccessMode('PIN'); document.getElementById('accessPinInput').value=pin; accessError('PIN restablecido. Ya puedes entrar.');
+}
+function chooseOtherPerson(){
+  closeOverlay('playerAccessOverlay');
+  const input=document.getElementById('playerName');
+  input.value=''; input.focus(); resetAuthUI();
+  alert(`El nombre "${pendingAccessName}" ya pertenece a otro jugador. Escribe otro nombre o apodo para diferenciarte.`);
+}
+
+async function askForSecurityAnswer(name, pin){
+  // Se conserva para el flujo inicial de alta. La llave seguirá disponible luego.
+  const answer = prompt('🔑 Configura tu recuperación de PIN.\n\nEjemplo de respuesta secreta: tu equipo de fútbol favorito.\n\nEscribe tu respuesta secreta aquí:');
+  if(!answer || !answer.trim()) return false;
+  const result = await apiPost({action:'setSecurityAnswer', name, pin, securityAnswer: answer.trim()}).catch(()=>({ok:false}));
+  if(result.ok){
+    hasSecurityAnswer_ = true;
+    updateRecoveryButton_();
+    alert('✅ Recuperación configurada correctamente.');
+    return true;
+  } else {
+    alert(humanError_(result.error, 'No se pudo guardar la recuperación. Inténtalo nuevamente.'));
+    return false;
+  }
+}
+
+function updateRecoveryButton_(){
+  const btn = document.getElementById('setSecurityAnswerBtn');
+  if(!btn) return;
+  btn.classList.remove('hidden');
+  btn.title = hasSecurityAnswer_ ? 'Cambiar recuperación de PIN' : 'Configurar recuperación de PIN';
+  btn.setAttribute('aria-label', btn.title);
+  const hint=document.getElementById('recoverySettingsActionHint');
+  if(hint) hint.textContent = hasSecurityAnswer_ ? 'Cambiar tu respuesta de recuperación' : 'Configurar tu recuperación';
+}
+
+function openRecoverySettings_(){
+  if(!authedName || !authedPin) return;
+  const title = document.getElementById('recoverySettingsTitle');
+  const hint = document.getElementById('recoverySettingsHint');
+  const save = document.getElementById('recoverySettingsSaveBtn');
+  const pinInput = document.getElementById('recoveryCurrentPinInput');
+  const answerInput = document.getElementById('recoveryNewAnswerInput');
+  const err = document.getElementById('recoverySettingsError');
+
+  title.textContent = hasSecurityAnswer_ ? 'Cambiar recuperación' : 'Configurar recuperación';
+  hint.textContent = hasSecurityAnswer_
+    ? 'Por seguridad, confirma tu PIN actual antes de reemplazar tu respuesta de recuperación.'
+    : 'Por seguridad, confirma tu PIN actual para configurar tu respuesta de recuperación.';
+  save.textContent = hasSecurityAnswer_ ? 'Guardar nueva recuperación' : 'Configurar recuperación';
+  pinInput.value = '';
+  answerInput.value = '';
+  err.textContent = '';
+  openOverlay('recoverySettingsOverlay');
+  setTimeout(()=>pinInput.focus(), 80);
+}
+
+async function saveRecoverySettings_(){
+  if(!authedName) return;
+  const pinInput = document.getElementById('recoveryCurrentPinInput');
+  const answerInput = document.getElementById('recoveryNewAnswerInput');
+  const err = document.getElementById('recoverySettingsError');
+  const btn = document.getElementById('recoverySettingsSaveBtn');
+  const typedPin = String(pinInput.value || '').trim();
+  const answer = String(answerInput.value || '').trim();
+
+  err.textContent = '';
+  if(!/^\d{4}$/.test(typedPin)){
+    err.textContent = 'Escribe tu PIN actual de 4 dígitos.';
+    return;
+  }
+  if(!answer){
+    err.textContent = 'Escribe una respuesta de recuperación.';
+    return;
+  }
+
+  btn.disabled = true;
+  try{
+    const result = await apiPost({
+      action:'setSecurityAnswer',
+      name:authedName,
+      pin:typedPin,
+      securityAnswer:answer
+    }).catch(()=>({ok:false,error:'Sin conexión'}));
+
+    if(!result.ok){
+      const raw = String(result.error || '');
+      err.textContent = raw.includes('verificar')
+        ? 'PIN incorrecto. No se modificó tu recuperación.'
+        : humanError_(raw, 'No se pudo actualizar la recuperación.');
+      return;
+    }
+
+    hasSecurityAnswer_ = true;
+    updateRecoveryButton_();
+    closeOverlay('recoverySettingsOverlay');
+    showToast_('✅ Recuperación actualizada');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function getMyParticipantStatus_(silent=false){
+  if(!authedName || !authedPin || !currentPolla) return null;
+  const req={action:'getMyParticipantStatus',pollaId:currentPolla.id,name:authedName,pin:authedPin};
+  return (silent ? apiPostSilent(req) : apiPost(req)).catch(()=>null);
+}
+
+async function configureMyWhatsapp(){
+  if(!authedName || !authedPin) return;
+  const current = myWhatsapp_ || '';
+  const shown = current.startsWith('51') && current.length===11 ? current.slice(2) : current;
+  const raw = prompt(
+    '📱 WhatsApp de contacto (opcional)\n\nSolo lo verá el administrador y se usará para comunicaciones relacionadas con LaPollaTICO.\n\nEscribe tu número o deja el campo vacío para eliminarlo:',
+    shown
+  );
+  if(raw === null) return;
+
+  const digits = String(raw).replace(/\D/g,'');
+  if(digits && !(digits.length === 9 || (digits.length >= 10 && digits.length <= 15))){
+    alert('Ingresa un número de WhatsApp válido o deja el campo vacío para eliminarlo.');
+    return;
+  }
+
+  const btn = document.getElementById('whatsappConfigBtn');
+  if(btn) btn.disabled = true;
+  try{
+    const result = await apiPost({action:'updateMyWhatsapp',name:authedName,pin:authedPin,whatsapp:raw});
+    if(!result.ok){ alert(humanError_(result.error,'No se pudo actualizar tu WhatsApp.')); return; }
+    myWhatsapp_ = result.whatsapp || '';
+    showToast_(myWhatsapp_ ? '✅ WhatsApp actualizado' : '✅ WhatsApp eliminado');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+
+async function checkMyPaymentStatus(){
+  const banner = document.getElementById('payPendingBanner');
+  // 🎁 La Polla gratuita no tiene inscripción paga, así que este aviso
+  // nunca le corresponde acá, sin importar lo que diga la columna "paid".
+  if(!authedName || !currentPolla || currentPolla.isFreePolla){ banner.classList.add('hidden'); return; }
+  try{
+    const me = await getMyParticipantStatus_(true);
+    banner.classList.toggle('hidden', !me?.ok || me.paid);
+  } catch(err){
+    banner.classList.add('hidden');
+  }
+}
+
+async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistration, newInThisPolla, needsSecurityAnswer, referralCode){
+  authedName = realName; authedPin = pin;
+  rememberPlayerName_(authedName);
+  dirtyPredictionIds_.clear();
+  document.getElementById('playerName').value = authedName;
+  document.getElementById('nameField').classList.add('authed');
+  document.getElementById('pinLockedBox').classList.add('hidden');
+  document.getElementById('playerControlsRow').classList.remove('hidden');
+  document.getElementById('bulkToggleRow').classList.toggle('hidden', matchesView_ === 'resolved');
+  statusEl.textContent = registered ? '✓ ¡Bienvenido! PIN creado correctamente.' : `✓ Bienvenido de nuevo, ${authedName}`;
+  statusEl.className = 'name-status ok';
+
+  // La racha es secundaria: empieza en paralelo y nunca retrasa la aparición
+  // de los pronósticos ni del panel principal.
+  void updateStreakBadge();
+
+  // C5: una llamada privada trae pronósticos + estado de inscripción. Si por
+  // algún motivo el backend todavía no tiene C5, conservamos fallback compatible.
+  const bootstrap = await getPlayerBootstrap_();
+  let myStatus = null;
+  if(bootstrap?.ok){
+    mergeMyPredictions_(bootstrap.predictions || {});
+    myStatus = bootstrap;
+  } else {
+    await refreshMyPredictions();
+    myStatus = await getMyParticipantStatus_(true);
+  }
+
+  const recoveredDrafts = restorePredictionDrafts_();
+  await renderMatches();
+  if(recoveredDrafts > 0) showToast_(`📝 Recuperamos ${recoveredDrafts === 1 ? 'un pronóstico sin enviar' : recoveredDrafts + ' pronósticos sin enviar'}`);
+
+  myReferralCode = referralCode || myStatus?.referralCode || myReferralCode;
+  myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
+  renderMyReferralCode_();
+
+  // Reutilizamos el mismo estado para el aviso de pago. Antes se volvía a
+  // consultar getMyParticipantStatus inmediatamente, generando otra llamada.
+  const payBanner = document.getElementById('payPendingBanner');
+  if(payBanner){
+    if(!currentPolla || currentPolla.isFreePolla || !myStatus?.ok || myStatus.paid) payBanner.classList.add('hidden');
+    else payBanner.classList.remove('hidden');
+  }
+
+  let stillNeedsSecurityAnswer = needsSecurityAnswer;
+  if(isNewRegistration){
+    alert(`🎉 ¡Listo, ${authedName}! Ya estás inscrito en esta Polla.\n\n📲 Usa el botón "💬 Contactar al administrador" para avisarle a ${ADMIN_NAME} y completar tu inscripción.`);
+    if(needsSecurityAnswer){
+      const saved = await askForSecurityAnswer(authedName, authedPin);
+      if(saved) stillNeedsSecurityAnswer = false;
+    }
+  } else if(newInThisPolla){
+    alert(`🎉 ¡Bienvenido, ${authedName}! Como ya tenías cuenta de otra Polla, usamos el mismo PIN y quedaste inscrito automáticamente en esta también.\n\n📲 Usa el botón "💬 Contactar al administrador" para avisarle a ${ADMIN_NAME} y completar tu inscripción.`);
+  }
+
+  hasSecurityAnswer_ = !stillNeedsSecurityAnswer;
+  updateRecoveryButton_();
+}
+
+// Pinta (o esconde) el código de invitación propio junto al botón de invitar.
+// Si todavía no lo tenemos en memoria (p.ej. sesiones viejas que quedaron
+// abiertas desde antes de este cambio), lo busca una sola vez entre los
+// participantes ya cargados, igual que hacía inviteFriends() antes.
+function openPlayerSettings_(){
+  if(!authedName) return;
+  renderMyReferralCode_();
+  openOverlay('playerSettingsOverlay');
+}
+
+async function renderMyReferralCode_(){
+  const box = document.getElementById('myReferralCodeBox');
+  if(!box) return;
+  if(!authedName || !currentPolla){ box.classList.add('hidden'); return; }
+  if(!myReferralCode){
+    const me = await getMyParticipantStatus_(true);
+    myReferralCode = me?.ok ? (me.referralCode || '') : '';
+  }
+  if(!myReferralCode){ box.classList.add('hidden'); return; }
+  box.innerHTML = `Tu código de invitación: <b>${escapeHtml(myReferralCode)}</b>`;
+  box.classList.remove('hidden');
+}
+
+// 🔥 Racha de aciertos: badge chiquito, solo fuego + número. Se actualiza
+// cada vez que alguien confirma su identidad (onAuthSuccess). Si viene en 0,
+// no se muestra nada (no tiene sentido mostrar "🔥 0", solo agrega ruido).
+async function updateStreakBadge(){
+  const badge = document.getElementById('streakBadge');
+  if(!authedName || !currentPolla){ badge.classList.add('hidden'); return; }
+  // 📸 "Foto" de quién pidió esto, para descartar la respuesta si mientras
+  // tanto el usuario borró el nombre, cambió de Polla, o entró con otro
+  // nombre (evita que una respuesta atrasada reviva el badge después de
+  // que resetAuthUI() ya lo ocultó).
+  const requestedName = authedName, requestedPollaId = currentPolla.id;
+  try{
+    const result = await apiGetSilent('getStreak', {pollaId: requestedPollaId, name: requestedName});
+    if(authedName !== requestedName || !currentPolla || currentPolla.id !== requestedPollaId) return; // respuesta atrasada, ya no aplica
+    if(result && result.streak > 0){
+      badge.textContent = `🔥 ${result.streak}`;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }catch(e){
+    if(authedName !== requestedName || !currentPolla || currentPolla.id !== requestedPollaId) return; // respuesta atrasada
+    badge.classList.add('hidden'); // si falla, mejor no mostrar nada que un dato viejo
+  }
+}
+
+async function inviteFriends(){
+  if(!authedName) return;
+  if(!myReferralCode){
+    const me = await getMyParticipantStatus_(true);
+    myReferralCode = me?.ok ? (me.referralCode || '') : '';
+  }
+  const link = `${siteUrl()}?polla=${currentPolla.id}&ref=${myReferralCode}`;
+  const text = `⚽ ¡Únete a la Polla "TICO" # ${currentPolla.number}! Usa mi código ${myReferralCode} al registrarte.\n👉 ${link}`;
+  showGlobalLoader();
+  let blob;
+  try{
+    blob = await generateInviteFlyerImage(myReferralCode, link);
+  } finally { hideGlobalLoader(); }
+  await shareImageOrFallback(blob, text, `invitacion-polla-${currentPolla.number}.png`);
+}
+
+function compressImage(file, maxWidth=900, quality=0.72){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale; canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality).split(',')[1]);
+      };
+      img.onerror = reject; img.src = e.target.result;
+    };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
+}
+
+/* ============ PARTIDOS Y CASILLAS ============ */
+async function fetchPredictionTrendsForMatchIds_(matchIds, silent=true){
+  const ids=[...new Set((matchIds||[]).map(String).filter(Boolean))]
+    .filter(id=>!predictionTrendsLoadedMatches.has(id));
+  if(!ids.length || !currentPolla) return true;
+  const request={
+    action:'getPredictionTrendsForMatches',
+    pollaId:currentPolla.id,
+    matchIds:JSON.stringify(ids)
+  };
+  const result=await (silent ? apiPostSilent(request) : apiPost(request)).catch(()=>null);
+  if(!result?.ok || !result.trends) return false;
+  Object.assign(predictionTrendsCache,result.trends);
+  ids.forEach(id=>predictionTrendsLoadedMatches.add(id));
+  refreshTrendSlots_(ids);
+  return true;
+}
+function refreshTrendSlots_(ids){
+  (ids||[]).forEach(id=>{
+    const slot=document.getElementById('poll-slot-'+id);
+    const m=matches.find(x=>String(x.id)===String(id));
+    if(!slot || !m) return;
+    slot.innerHTML=buildPollHTML_(m, predictionsCache[m.id] || []);
+  });
+}
+async function ensurePredictionTrendsForGroup_(groupKey){
+  const ids=matches
+    .filter(m=>dateGroupKey(m.closeAt)===groupKey && !m.isCanceled && !m.resultSubmitted)
+    .map(m=>m.id);
+  return fetchPredictionTrendsForMatchIds_(ids);
+}
+async function loadMatches(force=false){
+  const box = document.getElementById('matchesContainer');
+  const cacheKey = String(currentPolla?.id || '');
+  const cached = cacheKey ? matchesCacheByPolla_.get(cacheKey) : null;
+  const cacheFresh = !!cached && (Date.now() - Number(cached.at || 0)) < CACHE_TTL_MATCHES_MS;
+
+  // H4.2: al volver rápidamente a una Polla reutilizamos los partidos ya cargados.
+  // El primer acceso sigue consultando al servidor y cualquier mutación Admin invalida este cache.
+  let matchesResult = cacheFresh ? cached.data : null;
+  if(!cacheFresh) box.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
+
+  // V19: un fallo de red NO se interpreta como una Polla sin partidos.
+  try{
+    if(force || !cacheFresh){
+      matchesResult = await apiGet('getMatches', {pollaId: currentPolla.id});
+      if(!Array.isArray(matchesResult)) throw new Error(matchesResult?.error || 'Respuesta inválida del servidor');
+      if(cacheKey) matchesCacheByPolla_.set(cacheKey, {data:matchesResult, at:Date.now()});
+    }
+  }catch(err){
+    matchesLoadFailed_ = true;
+    const matchesTabsError_ = document.getElementById('matchesViewTabs');
+    if(matchesTabsError_) matchesTabsError_.style.visibility = '';
+    box.innerHTML = `
+      <div class="empty">
+        <div class="ball">📡</div>
+        <div>No se pudieron cargar los partidos.</div>
+        <div class="hint" style="margin-top:6px">Revisa tu conexión a Internet y vuelve a intentarlo.</div>
+        <button class="submit-btn secondary" style="margin-top:14px" onclick="loadMatches()">🔄 Reintentar</button>
+      </div>`;
+    return false;
+  }
+
+  matchesLoadFailed_ = false;
+
+  // Conservamos qué jornadas tenía abiertas/cerradas el Admin antes de refrescar
+  // los partidos. Subir un resultado no debe contraerle la jornada en la cara.
+  const previousAdminCollapsed_ = new Set(collapsedAdminGroups);
+  const adminWasOpen_ = document.getElementById('adminOverlay')?.classList.contains('show');
+
+  matches = matchesResult;
+
+  const validIds = new Set(matches.map(m=>String(m.id)));
+  Object.keys(predictionsCache).forEach(id=>{ if(!validIds.has(String(id))) delete predictionsCache[id]; });
+  Object.keys(adminPredictionsCache).forEach(id=>{ if(!validIds.has(String(id))) delete adminPredictionsCache[id]; });
+  Object.keys(predictionTrendsCache).forEach(id=>{ if(!validIds.has(String(id))) delete predictionTrendsCache[id]; });
+  [...predictionTrendsLoadedMatches].forEach(id=>{ if(!validIds.has(String(id))) predictionTrendsLoadedMatches.delete(id); });
+
+  collapsedDateGroups = computeDefaultCollapsedGroups();
+  if(adminWasOpen_){
+    const validDateKeys_ = new Set(matches.map(m => dateGroupKey(m.closeAt)));
+    collapsedAdminGroups = new Set([...previousAdminCollapsed_].filter(key => validDateKeys_.has(key)));
+  } else {
+    collapsedAdminGroups = computeDefaultCollapsedGroups();
+  }
+
+  // Elegimos Por jugar / Resueltos ANTES del primer render. Así una Polla que
+  // ya tiene 0 partidos por jugar entra directamente a Resueltos sin mostrar
+  // primero por un instante la pestaña vacía de Por jugar.
+  chooseNaturalMatchesView_();
+  const matchesTabsReady_ = document.getElementById('matchesViewTabs');
+  if(matchesTabsReady_) matchesTabsReady_.style.visibility = '';
+
+  const visibleIds=matches
+    .filter(m=>!collapsedDateGroups.has(dateGroupKey(m.closeAt)) && !m.isCanceled && !m.resultSubmitted)
+    .map(m=>m.id);
+
+  await renderMatches();
+  void fetchPredictionTrendsForMatchIds_(visibleIds, true);
+  return true;
+}
+
+function invalidateStandingsCaches_(){
+  standingsCache = {pollaId:currentPolla?.id||null, data:null, at:0};
+  yearlyStandingsCache = {data:null, at:0};
+}
+function invalidateParticipantsCache_(){
+  participantsCache = [];
+  participantsCachePollaId = null;
+  participantsCacheAt = 0;
+}
+async function getParticipantsCached_(force=false, silent=false){
+  if(!currentPolla) return [];
+  const now=Date.now();
+  if(!force && participantsCachePollaId===currentPolla.id && Array.isArray(participantsCache) && (now-participantsCacheAt)<CACHE_TTL_PARTICIPANTS_MS){
+    return participantsCache;
+  }
+  const loaded = await (silent ? apiGetSilent('getParticipants',{pollaId:currentPolla.id}) : apiGet('getParticipants',{pollaId:currentPolla.id}));
+  participantsCache = Array.isArray(loaded) ? loaded : [];
+  participantsCachePollaId = currentPolla.id;
+  participantsCacheAt = now;
+  return participantsCache;
+}
+async function getStandingsCached_(force=false, silent=false){
+  if(!currentPolla) return [];
+  const now=Date.now();
+  if(!force && standingsCache.pollaId===currentPolla.id && Array.isArray(standingsCache.data) && (now-standingsCache.at)<CACHE_TTL_STANDINGS_MS){
+    return standingsCache.data;
+  }
+  const data = await (silent ? apiGetSilent('getStandings',{pollaId:currentPolla.id}) : apiGet('getStandings',{pollaId:currentPolla.id}));
+  standingsCache = {pollaId:currentPolla.id,data:Array.isArray(data)?data:[],at:now};
+  return standingsCache.data;
+}
+async function getYearlyStandingsCached_(force=false, silent=false){
+  const now=Date.now();
+  if(!force && Array.isArray(yearlyStandingsCache.data) && (now-yearlyStandingsCache.at)<CACHE_TTL_YEARLY_MS){
+    return yearlyStandingsCache.data;
+  }
+  const data = await (silent ? apiGetSilent('getYearlyStandings') : apiGet('getYearlyStandings'));
+  yearlyStandingsCache = {data:Array.isArray(data)?data:[],at:now};
+  return yearlyStandingsCache.data;
+}
+
+async function getPredictions(matchId, force){
+  if(!force && predictionsCache[matchId]) return predictionsCache[matchId];
+  const val = await apiGet('getPredictions', {matchId, pollaId: currentPolla ? currentPolla.id : ''}).catch(()=>[]);
+  predictionsCache[matchId] = val;
+  return val;
+}
+async function refreshAllPredictions(){
+  const [allPreds,trends] = await Promise.all([
+    apiGet('getAllPredictions',{pollaId:currentPolla.id}).catch(()=>({})),
+    apiGet('getPredictionTrends',{pollaId:currentPolla.id}).catch(()=>({}))
+  ]);
+  predictionTrendsCache=trends||{};
+  predictionsCache = allPreds || {};
+  matches.forEach(m => { if(!predictionsCache[m.id]) predictionsCache[m.id] = []; });
+}
+
+// Solo para operaciones que realmente necesitan TODOS los scores
+// (backup o exportación global). La navegación normal usa un resumen liviano.
+async function refreshAdminPredictions(){
+  if((!adminPin && !hasValidAdminSession_()) || !currentPolla) return false;
+  const result = await apiPost({
+    action:'getAdminAllPredictions',
+    pollaId:currentPolla.id,
+    pin:adminPin,
+    adminName:adminName
+  }).catch(()=>null);
+  if(!result?.ok) return false;
+  adminPredictionsCache = result.predictions || {};
+  matches.forEach(m => { if(!adminPredictionsCache[m.id]) adminPredictionsCache[m.id] = []; });
+  return true;
+}
+
+async function refreshAdminPredictionSummary_(force=false){
+  if((!adminPin && !hasValidAdminSession_()) || !currentPolla) return false;
+  if(!force && adminPredictionSummaryPollaId===currentPolla.id && adminPredictionSummaryCache && Object.keys(adminPredictionSummaryCache).length){
+    return true;
+  }
+  const result=await apiPostSilent({
+    action:'getAdminPredictionSummary',
+    pollaId:currentPolla.id,
+    pin:adminPin,
+    adminName:adminName
+  }).catch(()=>null);
+  if(!result?.ok || !result.counts) return false;
+  adminPredictionSummaryCache=result.counts;
+  adminPredictionSummaryPollaId=currentPolla.id;
+  matches.forEach(m=>{ if(adminPredictionSummaryCache[m.id]===undefined) adminPredictionSummaryCache[m.id]=0; });
+  return true;
+}
+function mergeMyPredictions_(predictions){
+  if(!predictions || typeof predictions !== 'object' || !authedName) return;
+  Object.entries(predictions).forEach(([matchId,p])=>{
+    const list=predictionsCache[matchId] || [];
+    const idx=list.findIndex(x=>normalizeName(x.name)===normalizeName(authedName));
+    if(idx>=0) list[idx]=p; else list.push(p);
+    predictionsCache[matchId]=list;
+  });
+}
+
+// C5: bootstrap privado del jugador en una sola llamada. Devuelve pronósticos
+// y estado mínimo de inscripción, evitando revalidar PIN/participación varias
+// veces seguidas justo después del login.
+async function getPlayerBootstrap_(){
+  if(!authedName || !authedPin || !currentPolla) return null;
+  return apiPost({
+    action:'getPlayerBootstrap',
+    pollaId:currentPolla.id,
+    name:authedName,
+    pin:authedPin
+  }).catch(()=>null);
+}
+
+async function refreshMyPredictions(){
+  if(!authedName || !authedPin || !currentPolla) return;
+  const result=await apiPost({action:'getMyPredictions',pollaId:currentPolla.id,name:authedName,pin:authedPin}).catch(()=>null);
+  if(!result?.ok || !result.predictions) return;
+  mergeMyPredictions_(result.predictions);
+}
+
+// Actualiza el caché local al instante tras un envío exitoso, sin tener que volver a pedirle
+// los datos al servidor (eso es lo que hacía sentir lenta la app después de cada envío).
+function updateLocalPrediction(matchId, name, home, away){
+  if(!predictionsCache[matchId]) predictionsCache[matchId] = [];
+  const list = predictionsCache[matchId];
+  const idx = list.findIndex(p => normalizeName(p.name) === normalizeName(name));
+  if(idx >= 0){
+    list[idx] = {...list[idx], home, away, editCount: (Number(list[idx].editCount)||0) + 1};
+  } else {
+    list.push({name, home, away, editCount: 1, points: '', ts: new Date().toISOString()});
+  }
+}
+function pollPercentages(preds){
+  if(preds.length === 0) return null;
+  let home=0, draw=0, away=0;
+  preds.forEach(p => {
+    const h = Number(p.home), a = Number(p.away);
+    if(h > a) home++; else if(h < a) away++; else draw++;
+  });
+  const total = preds.length;
+  return {
+    homePct: Math.round(home/total*100), drawPct: Math.round(draw/total*100), awayPct: Math.round(away/total*100), total
+  };
+}
+
+function computePointsBreakdown(predHome, predAway, actualHome, actualAway, isStarMatch, allPreds){
+  predHome = Number(predHome); predAway = Number(predAway);
+  actualHome = Number(actualHome); actualAway = Number(actualAway);
+  const items = [];
+  const isExactMatch = predHome === actualHome && predAway === actualAway;
+  let base = 0;
+
+  if(isExactMatch){
+    items.push({label: 'Resultado exacto', pts: 5});
+    base = 5;
+  } else {
+    if(predHome === actualHome){ items.push({label: 'Gol del local exacto', pts: 1}); base += 1; }
+    if(predAway === actualAway){ items.push({label: 'Gol del visitante exacto', pts: 1}); base += 1; }
+    const predOutcome = predHome > predAway ? 'L' : (predHome < predAway ? 'V' : 'E');
+    const actualOutcome = actualHome > actualAway ? 'L' : (actualHome < actualAway ? 'V' : 'E');
+    if(predOutcome === actualOutcome){ items.push({label: 'Resultado correcto', pts: 2}); base += 2; }
+    const actualDiff = actualHome - actualAway, predDiff = predHome - predAway;
+    if(actualDiff !== 0 && predDiff === actualDiff){ items.push({label: 'Handicap (diferencia exacta)', pts: 2}); base += 2; }
+  }
+
+  if(isExactMatch && allPreds && allPreds.length > 0){
+    const exactCount = allPreds.filter(p => Number(p.home) === actualHome && Number(p.away) === actualAway).length;
+    if(exactCount / allPreds.length < 0.30){
+      items.push({label: 'Bonus: pocos acertaron el exacto', pts: 1});
+      base += 1;
+    }
+  }
+
+  let total = base;
+  if(isStarMatch && base > 0){
+    items.push({label: '⭐ Partido estrella (x2)', pts: base});
+    total = base * 2;
+  }
+  return {items, total};
+}
+
+function canceledMatchResolved_(match){
+  if(!match?.isCanceled) return false;
+  // Cancelar/Reemplazar conserva el mismo matchNumber. El cancelado pasa a
+  // “Resueltos” recién cuando algún reemplazo activo de ese número ya tiene
+  // resultado oficial cargado.
+  return matches.some(other =>
+    other.id !== match.id &&
+    !other.isCanceled &&
+    String(other.matchNumber) === String(match.matchNumber) &&
+    !!other.resultSubmitted
+  );
+}
+
+function isResolvedViewMatch_(match){
+  return !!match.resultSubmitted || canceledMatchResolved_(match);
+}
+
+function isUpcomingViewMatch_(match){
+  return !match.resultSubmitted && (!match.isCanceled || !canceledMatchResolved_(match));
+}
+
+function chooseNaturalMatchesView_(){
+  const upcomingN = matches.filter(isUpcomingViewMatch_).length;
+  const resolvedN = matches.filter(isResolvedViewMatch_).length;
+  if(upcomingN === 0 && resolvedN > 0) matchesView_ = 'resolved';
+  else if(matchesView_ !== 'resolved' || resolvedN === 0) matchesView_ = 'upcoming';
+}
+
+function updateMatchesViewTabs_(){
+  const upBtn = document.getElementById('matchesTabUpcoming');
+  const resBtn = document.getElementById('matchesTabResolved');
+  const upCount = document.getElementById('matchesUpcomingCount');
+  const resCount = document.getElementById('matchesResolvedCount');
+  const upcomingN = matches.filter(isUpcomingViewMatch_).length;
+  const resolvedN = matches.filter(isResolvedViewMatch_).length;
+  if(upBtn){ upBtn.classList.toggle('active', matchesView_ === 'upcoming'); upBtn.setAttribute('aria-selected', matchesView_ === 'upcoming' ? 'true' : 'false'); }
+  if(resBtn){ resBtn.classList.toggle('active', matchesView_ === 'resolved'); resBtn.setAttribute('aria-selected', matchesView_ === 'resolved' ? 'true' : 'false'); }
+  if(upCount) upCount.textContent = upcomingN ? String(upcomingN) : '';
+  if(resCount) resCount.textContent = resolvedN ? String(resolvedN) : '';
+}
+
+function updatePredictionProgress_(){
+  const box=document.getElementById('predictionProgress');
+  const text=document.getElementById('predictionProgressText');
+  const fill=document.getElementById('predictionProgressFill');
+  const next=document.getElementById('nextPendingPredictionBtn');
+  if(!box || !text || !fill || !next) return;
+  if(!authedName || matchesView_ !== 'upcoming'){ box.classList.remove('show'); return; }
+  const relevant=matches.filter(m=>!m.isCanceled && !m.resultSubmitted);
+  if(!relevant.length){ box.classList.remove('show'); return; }
+  const sent=relevant.filter(m=>(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))).length;
+  const pendingOpen=relevant.filter(m=>!isClosed(m.closeAt) && (dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>normalizeName(p.name)===normalizeName(authedName))));
+  const pct=Math.round(sent*100/relevant.length);
+  text.innerHTML=`Tus pronósticos <b>${sent}/${relevant.length}</b> enviados`;
+  fill.style.width=`${pct}%`;
+  next.classList.toggle('hidden', pendingOpen.length===0);
+  box.classList.add('show');
+}
+function goToNextPendingPrediction_(){
+  if(matchesView_ !== 'upcoming') setMatchesView_('upcoming');
+  const target=getSortedMatches().find(m=>!m.isCanceled && !m.resultSubmitted && !isClosed(m.closeAt) && (
+    dirtyPredictionIds_.has(m.id) || !(predictionsCache[m.id]||[]).some(p=>authedName && normalizeName(p.name)===normalizeName(authedName))
+  ));
+  if(!target){ showToast_('✓ Estás al día con tus pronósticos'); return; }
+  const groupKey=dateGroupKey(target.closeAt);
+  if(collapsedDateGroups.has(groupKey)){ collapsedDateGroups.delete(groupKey); renderMatches(); }
+  requestAnimationFrame(()=>document.getElementById(`card-${target.id}`)?.scrollIntoView({behavior:'smooth',block:'center'}));
+}
+function predictionStatusFor_(matchId, mine){
+  if(dirtyPredictionIds_.has(matchId)) return {text: mine ? '📝 Cambio pendiente' : '📝 Pendiente de enviar', cls:'pending'};
+  if(mine) return {text:'✓ Guardado', cls:'saved'};
+  return {text:'', cls:''};
+}
+function refreshPredictionStatus_(matchId){
+  const mine=(predictionsCache[matchId]||[]).find(p=>authedName && normalizeName(p.name)===normalizeName(authedName));
+  const state=predictionStatusFor_(matchId,mine);
+  const el=document.getElementById(`status-${matchId}`);
+  if(el){ el.textContent=state.text; el.classList.toggle('pending',state.cls==='pending'); el.classList.toggle('saved',state.cls==='saved'); }
+  const btn=document.getElementById(`submit-${matchId}`);
+  if(btn) btn.textContent = mine ? (dirtyPredictionIds_.has(matchId) ? 'Guardar cambio' : 'Actualizar pronóstico') : 'Enviar pronóstico';
+  updatePredictionProgress_();
+}
+
+function setMatchesView_(view){
+  if(view !== 'upcoming' && view !== 'resolved') return;
+  if(matchesView_ === view) return;
+  matchesView_ = view;
+  // El envío masivo solo pertenece a “Por jugar”. Evitamos controles de edición
+  // dentro del histórico resuelto para mantener la pantalla limpia y sin ambigüedad.
+  const bulkRow = document.getElementById('bulkToggleRow');
+  const bulkBar = document.getElementById('bulkBar');
+  if(view === 'resolved'){
+    bulkMode = false;
+    selectedBulkMatches.clear();
+    const cb = document.getElementById('bulkModeCheckbox');
+    if(cb) cb.checked = false;
+    bulkRow?.classList.add('hidden');
+    bulkBar?.classList.add('hidden');
+  } else if(authedName){
+    bulkRow?.classList.remove('hidden');
+  }
+  updateMatchesViewTabs_();
+  renderMatches();
+}
+
+async function renderMatches(){
+  const container = document.getElementById('matchesContainer');
+  container.innerHTML = '';
+
+  updateMatchesViewTabs_();
+  updatePredictionProgress_();
+  const allSorted = getSortedMatches();
+  const sorted = allSorted.filter(m => matchesView_ === 'resolved'
+    ? isResolvedViewMatch_(m)
+    : isUpcomingViewMatch_(m));
+  if(sorted.length === 0){
+    const msg = matchesView_ === 'resolved'
+      ? 'Todavía no hay partidos resueltos'
+      : 'No hay partidos por jugar en este momento';
+    container.innerHTML = `<div class="matches-view-empty"><div style="font-size:24px;margin-bottom:6px">⚽</div>${msg}</div>`;
+    updateBulkBar();
+    updateMiniLeaderboard();
+    return;
+  }
+
+  // Agrupar los partidos por fecha (respetando el orden que ya trae getSortedMatches),
+  // así el bloque de cada fecha se arma con los partidos en el mismo orden de siempre.
+  const groups = [];
+  const groupIndexByKey = {};
+  sorted.forEach(m => {
+    const key = dateGroupKey(m.closeAt);
+    if(!(key in groupIndexByKey)){
+      groupIndexByKey[key] = groups.length;
+      groups.push({key, sampleIso: m.closeAt, matches: []});
+    }
+    groups[groupIndexByKey[key]].matches.push(m);
+  });
+
+  groups.forEach(group => {
+    const needed = group.matches.filter(m => !m.isCanceled);
+    const predictedCount = needed.filter(m => {
+      const preds = predictionsCache[m.id] || [];
+      return authedName && preds.find(p => normalizeName(p.name) === normalizeName(authedName));
+    }).length;
+    const isOpen = !collapsedDateGroups.has(group.key);
+    const pillText = authedName
+      ? `${predictedCount}/${needed.length} PRONÓSTICO${needed.length === 1 ? '' : 'S'}`
+      : `${needed.length} PARTIDO${needed.length === 1 ? '' : 'S'}`;
+
+    const section = document.createElement('div');
+    section.className = 'date-group';
+    section.innerHTML = `
+      <div class="date-group-header" onclick="toggleDateGroup('${group.key}')">
+        <span class="date-group-label">${fmtDayHeader(group.sampleIso)}</span>
+        <span class="date-group-pill">${pillText}</span>
+        <span class="date-group-chevron${isOpen ? ' open' : ''}" id="chevron-${group.key}">⌄</span>
+      </div>
+      <div class="date-group-body${isOpen ? '' : ' hidden'}" id="group-body-${group.key}"></div>`;
+    container.appendChild(section);
+
+    const body = section.querySelector('.date-group-body');
+    group.matches.forEach(m => body.appendChild(buildMatchCard(m)));
+  });
+
+  updateCountdowns();
+  updateBulkBar();
+  updateMiniLeaderboard();
+}
+
+// 📊 Mini leaderboard flotante: una píldora pequeña, fija en la esquina,
+// que muestra en qué puesto va el usuario SIN que tenga que abrir la tabla
+// completa. Solo aparece si confirmó su nombre y ya hay tabla calculada
+// (si no ha pronosticado nada, simplemente no aparece, para no mostrar un
+// "vas de último" que desanime a alguien que recién entra).
+async function updateMiniLeaderboard(){
+  const el = document.getElementById('miniLeaderboard');
+  if(!authedName || !currentPolla){ el.classList.add('hidden'); return; }
+  try{
+    const standings = await getStandingsCached_(false, true);
+    const myRow = standings.find(s => normalizeName(s.name) === normalizeName(authedName));
+    if(myRow && myRow.matchesScored > 0){
+      el.textContent = `📊 Vas #${myRow.rank + 1} de ${standings.length}`;
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  }catch(e){
+    el.classList.add('hidden');
+  }
+}
+
+// 🏆 Único lugar que decide si el botón "Ganadores" se ve o no — se llama
+// desde los 3 puntos donde puede cambiar (entrar a la Polla, refrescar
+// partidos, guardar el toggle en admin, finalizar la Polla). Oculta también
+// el contenedor (.winners-row), no solo el botón, para que no quede un
+// espacio vacío cuando no hay nada que mostrar.
+function updateWinnersButtonVisibility(){
+  const show = !!(currentPolla && (currentPolla.status === 'finalizada' || currentPolla.showWinnersLive));
+  document.getElementById('winnersToolBtn').classList.toggle('hidden', !show);
+  document.getElementById('winnersRow').classList.toggle('hidden', !show);
+}
+async function toggleDateGroup(key){
+  const body = document.getElementById('group-body-' + key);
+  const chevron = document.getElementById('chevron-' + key);
+  if(!body) return;
+  const willOpen = body.classList.contains('hidden');
+  body.classList.toggle('hidden', !willOpen);
+  if(chevron) chevron.classList.toggle('open', willOpen);
+  if(willOpen){
+    collapsedDateGroups.delete(key);
+    // OPT V15: abrir una jornada es instantáneo. La barra de tendencias aparece
+    // cuando llega su lectura agregada, sin reconstruir tarjetas ni perder inputs.
+    void ensurePredictionTrendsForGroup_(key);
+  } else {
+    collapsedDateGroups.add(key);
+  }
+}
+
+/* ============ TARJETA DE PARTIDO: construida en 5 estados posibles ============
+   buildMatchCard() ya no arma todo el HTML de un tirón: solo decide en cuál de
+   los 5 estados está el partido y delega a la función renderX_Body_ que le
+   corresponde. Cada una de esas funciones es independiente y se puede leer,
+   tocar o probar por separado sin tener que entender las otras 4. El HTML que
+   generan es idéntico al de antes, esto es solo una reorganización. */
+function buildMatchCard(m){
+    const closed = isClosed(m.closeAt);
+    const closeInMs = new Date(m.closeAt) - new Date();
+    const closingSoon = !closed && closeInMs < 3600000;
+
+    let mine = null;
+    const preds = predictionsCache[m.id] || [];
+    if(authedName) mine = preds.find(p => normalizeName(p.name) === normalizeName(authedName));
+
+    const pollHTML = buildPollHTML_(m, preds);
+
+    let bodyHTML;
+    if(m.isCanceled)            bodyHTML = renderCanceledBody_(m);
+    else if(m.resultSubmitted)  bodyHTML = renderResultBody_(m, mine, preds);
+    else if(closed)             bodyHTML = renderClosedNoResultBody_(m, mine, pollHTML);
+    else if(!authedName)        bodyHTML = renderLockedBody_(m, pollHTML);
+    else                        bodyHTML = renderOpenBody_(m, mine, pollHTML);
+
+    return assembleCardShell_(m, bodyHTML, closed, closingSoon, !!mine);
+}
+
+// Barra de "quién va ganando en las opiniones" (% de local/empate/visitante
+// entre todos los pronósticos). No se muestra si ya hay resultado o si el
+// partido está cancelado.
+function buildPollHTML_(m, preds){
+  const t = predictionTrendsCache[m.id];
+  const poll = t ? {homePct:t.localPct,drawPct:t.drawPct,awayPct:t.awayPct,total:t.total} : null;
+  if(!poll || m.resultSubmitted || m.isCanceled) return '';
+  return `
+      <div class="poll-bar-row">
+        <div class="poll-bar">
+          <div class="seg-home" style="width:${poll.homePct}%"></div>
+          <div class="seg-draw" style="width:${poll.drawPct}%"></div>
+          <div class="seg-away" style="width:${poll.awayPct}%"></div>
+        </div>
+        <div class="poll-labels"><span>${escapeHtml(m.home)} ${poll.homePct}%</span><span>Empate ${poll.drawPct}%</span><span>${poll.awayPct}% ${escapeHtml(m.away)}</span></div>
+      </div>`;
+}
+
+/* ---- ESTADO 1: partido cancelado ---- */
+function renderCanceledBody_(m){
+  return `
+        <div class="teams-row"><div class="team-name">${escapeHtml(m.home)}</div><div class="vs">VS</div><div class="team-name">${escapeHtml(m.away)}</div></div>
+        <div class="lock-note" style="color:var(--red-card); font-weight:700;">
+          🚫 Partido Cancelado<br><span style="font-weight:500; font-size:12px; color:rgba(246,243,234,0.7);">${escapeHtml(m.cancelReason || 'Motivo de fuerza mayor')}</span>
+        </div>`;
+}
+
+/* ---- ESTADO 2: ya se subió el resultado final ---- */
+function renderResultBody_(m, mine, preds){
+  const ptsText = authedName
+    ? (mine ? `Tu pronóstico: ${mine.home}-${mine.away} · Ganaste ${mine.points ?? 0} puntos` : 'No enviaste pronóstico para este partido')
+    : 'Confirma tu nombre arriba para ver tu puntaje';
+
+  // OPT V14: el detalle de puntos ya no obliga a descargar todos los pronósticos
+  // del partido al entrar. Se calcula cuando la persona toca "¿Cómo sumé esto?".
+  const breakdownHTML = (authedName && mine && Number(mine.points || 0) > 0) ? `
+            <button class="breakdown-toggle" onclick="toggleBreakdown('${m.id}')">¿Cómo sumé esto? <span id="breakdown-arrow-${m.id}">▾</span></button>
+            <div class="pts-breakdown hidden" id="breakdown-${m.id}" data-loaded="0">Cargando detalle...</div>` : '';
+
+  const shareBtn = (authedName && mine) ? `<button class="submit-btn share" onclick="sharePrediction('${m.id}')">📲 Compartir mi resultado</button>` : '';
+  return `
+        <div class="result-banner">
+          <div class="score">${escapeHtml(m.home)} ${m.actualHome} - ${m.actualAway} ${escapeHtml(m.away)}</div>
+          <div class="pts">${ptsText}</div>
+          ${breakdownHTML}
+        </div>
+        <div class="match-footer">
+          <button class="submit-btn secondary" onclick="showResults('${m.id}')">Ver tabla del partido</button>
+          ${shareBtn}
+        </div>`;
+}
+
+/* ---- ESTADO 3: ya cerró para pronósticos, pero aún sin resultado subido ---- */
+function renderClosedNoResultBody_(m, mine, pollHTML){
+  const homeVal = mine ? mine.home : '-';
+  const awayVal = mine ? mine.away : '-';
+  const shareBtn = mine ? `<button class="submit-btn share" onclick="sharePrediction('${m.id}')">📲 Compartir mi pronóstico</button>` : '';
+
+  return `
+        <div class="teams-row"><div class="team-name">${escapeHtml(m.home)}</div><div class="vs">VS</div><div class="team-name">${escapeHtml(m.away)}</div></div>
+        <div class="poll-slot" id="poll-slot-${m.id}">${pollHTML}</div>
+        <div class="score-row">
+          <div class="stepper">
+            <input type="text" class="score-input" value="${homeVal}" disabled>
+          </div>
+          <div class="dash">−</div>
+          <div class="stepper">
+            <input type="text" class="score-input" value="${awayVal}" disabled>
+          </div>
+        </div>
+        <div class="match-footer">
+          <button class="submit-btn secondary" onclick="showResults('${m.id}')">📋 Ver pronósticos de todos</button>
+          <div class="status-line" id="status-${m.id}">
+            ${mine ? `Tu pronóstico guardado: ${mine.home} - ${mine.away}` : 'No enviaste pronóstico'}
+          </div>
+          ${shareBtn}
+        </div>`;
+}
+
+/* ---- ESTADO 4: partido abierto, pero el usuario todavía no confirmó su nombre ---- */
+function renderLockedBody_(m, pollHTML){
+  return `
+        <div class="teams-row"><div class="team-name">${escapeHtml(m.home)}</div><div class="vs">VS</div><div class="team-name">${escapeHtml(m.away)}</div></div>
+        <div class="poll-slot" id="poll-slot-${m.id}">${pollHTML}</div>
+        <div class="lock-note">Confirma tu nombre arriba (✓) para pronosticar este partido.</div>`;
+}
+
+/* ---- ESTADO 5: partido abierto y el usuario puede pronosticar ---- */
+function renderOpenBody_(m, mine, pollHTML){
+  const draft = getPredictionDraft_(m.id);
+  const homeVal = draft ? draft.home : (mine ? mine.home : 0);
+  const awayVal = draft ? draft.away : (mine ? mine.away : 0);
+  if(draft && (!mine || Number(mine.home)!==Number(draft.home) || Number(mine.away)!==Number(draft.away))) dirtyPredictionIds_.add(m.id);
+  const statusState = predictionStatusFor_(m.id, mine);
+  const shareBtn = mine ? `<button class="submit-btn share" onclick="sharePrediction('${m.id}')">📲 Compartir mi pronóstico</button>` : '';
+  const isChecked = selectedBulkMatches.has(m.id);
+
+  const footerHTML = bulkMode ? `
+        <div class="match-footer">
+          <label class="match-bulk-select">
+            <input type="checkbox" id="bulk-check-${m.id}" ${isChecked ? 'checked' : ''} onchange="toggleMatchBulkSelect('${m.id}', this.checked)">
+            <span id="bulk-text-${m.id}">${isChecked ? '✅ Incluido para envío masivo' : '⬜ Omitir este partido'}</span>
+          </label>
+          <div class="status-line ${statusState.cls}" id="status-${m.id}">${statusState.text}</div>
+          ${shareBtn}
+        </div>` : `
+        <div class="match-footer">
+          <button class="submit-btn" id="submit-${m.id}" onclick="submitPrediction('${m.id}')">
+            ${mine ? 'Actualizar pronóstico' : 'Enviar pronóstico'}
+          </button>
+          <div class="status-line ${statusState.cls}" id="status-${m.id}">${statusState.text}</div>
+          ${shareBtn}
+        </div>`;
+
+  return `
+        <div class="teams-row"><div class="team-name">${escapeHtml(m.home)}</div><div class="vs">VS</div><div class="team-name">${escapeHtml(m.away)}</div></div>
+        <div class="poll-slot" id="poll-slot-${m.id}">${pollHTML}</div>
+        <div class="score-row">
+          <div class="stepper">
+            <button onclick="changeScore('${m.id}','home',1)">+</button>
+            <input type="number" min="0" max="20" class="score-input" id="score-${m.id}-home" value="${homeVal}" oninput="onScoreInput('${m.id}')">
+            <button onclick="changeScore('${m.id}','home',-1)">−</button>
+          </div>
+          <div class="dash">−</div>
+          <div class="stepper">
+            <button onclick="changeScore('${m.id}','away',1)">+</button>
+            <input type="number" min="0" max="20" class="score-input" id="score-${m.id}-away" value="${awayVal}" oninput="onScoreInput('${m.id}')">
+            <button onclick="changeScore('${m.id}','away',-1)">−</button>
+          </div>
+        </div>
+        ${footerHTML}`;
+}
+
+/* ---- Envoltorio común: foto, ticket, número de partido, badges y el body que ya se armó arriba ---- */
+function assembleCardShell_(m, bodyHTML, closed, closingSoon, hasMine=false){
+  const card = document.createElement('div');
+  card.className = 'match' + (m.isStarMatch ? ' star-match' : '') + (m.isCanceled ? ' canceled-match' : '');
+  card.id = 'card-' + m.id;
+
+  const closeLabel = m.isCanceled ? 'CANCELADO' : (closed ? `Cerró ${fmtCloseTime(m.closeAt)}` : (fmtCountdown(m.closeAt) || fmtCloseTime(m.closeAt)));
+
+  card.innerHTML = `
+      <div class="match-inner">
+        ${m.isCanceled ? '<div class="stamp">CANCELADO</div>' : (closed && !m.resultSubmitted ? '<div class="stamp">Cerrado</div>' : '')}
+        ${m.imageUrl ? `<img class="match-photo" src="${m.imageUrl}" alt="Partido ${escapeHtml(m.matchNumber)}" loading="lazy" decoding="async" onerror="this.style.display='none'">` : ''}
+        ${m.imageUrl ? '<div class="ticket-notch"></div><div class="ticket-dashes"></div>' : ''}
+        <div class="match-top">
+          <div>
+            <div class="matchnum">Partido ${escapeHtml(m.matchNumber)}</div>
+            <div class="close-time ${closed || m.isCanceled ? 'past' : ''}" ${!closed && !m.isCanceled ? `data-closeat="${m.closeAt}"` : ''}>${closeLabel}</div>
+          </div>
+          <div class="badges-row">
+            ${m.isCanceled ? '<div class="canceled-badge-inline">🚫 Cancelado</div>' : ''}
+            ${m.isStarMatch ? '<div class="star-badge-inline">⭐ Estrella</div>' : ''}
+            ${closingSoon && !m.isCanceled ? '<div class="soon-badge">⏰ Cierra pronto</div>' : ''}
+          </div>
+        </div>
+        ${bodyHTML}
+      </div>
+      `;
+  return card;
+}
+
+async function toggleBreakdown(matchId){
+  const el = document.getElementById('breakdown-'+matchId);
+  const arrow = document.getElementById('breakdown-arrow-'+matchId);
+  if(!el) return;
+
+  const opening=el.classList.contains('hidden');
+  el.classList.toggle('hidden', !opening);
+  if(arrow) arrow.textContent = opening ? '▴' : '▾';
+  if(!opening || el.dataset.loaded==='1') return;
+
+  const m=matches.find(x=>x.id===matchId);
+  const mine=(predictionsCache[matchId]||[]).find(p=>authedName && normalizeName(p.name)===normalizeName(authedName));
+  if(!m || !mine){ el.textContent='No se pudo calcular el detalle.'; return; }
+
+  let allPreds;
+  try { allPreds=await getPredictions(matchId,true); }
+  catch(e){ el.textContent='No se pudo cargar el detalle en este momento.'; return; }
+  const breakdown=computePointsBreakdown(mine.home,mine.away,m.actualHome,m.actualAway,m.isStarMatch,Array.isArray(allPreds)?allPreds:[]);
+  el.innerHTML=breakdown.items.length
+    ? breakdown.items.map(i=>`+${i.pts} ${escapeHtml(i.label)}`).join(' &nbsp;·&nbsp; ')
+    : 'Sin bonificaciones adicionales.';
+  el.dataset.loaded='1';
+}
+
+function changeScore(matchId, side, delta){
+  const el = document.getElementById(`score-${matchId}-${side}`);
+  if(!el) return;
+  let val = (parseInt(el.value) || 0) + delta;
+  if(val < 0) val = 0; if(val > 20) val = 20;
+  el.value = val;
+  onScoreInput(matchId);
+}
+
+function onScoreInput(matchId){
+  const homeEl = document.getElementById(`score-${matchId}-home`);
+  const awayEl = document.getElementById(`score-${matchId}-away`);
+  if(homeEl && homeEl.value < 0) homeEl.value = 0;
+  if(awayEl && awayEl.value < 0) awayEl.value = 0;
+
+  const mine=(predictionsCache[matchId]||[]).find(p=>authedName && normalizeName(p.name)===normalizeName(authedName));
+  const homeNow = parseScoreValue_(homeEl?.value ?? '');
+  const awayNow = parseScoreValue_(awayEl?.value ?? '');
+  const differs = homeNow === null || awayNow === null || !mine ||
+    Number(mine.home)!==homeNow || Number(mine.away)!==awayNow;
+  if(differs){
+    dirtyPredictionIds_.add(matchId);
+    if(homeNow !== null && awayNow !== null) savePredictionDraft_(matchId, homeNow, awayNow);
+  } else {
+    dirtyPredictionIds_.delete(matchId);
+    clearPredictionDraft_(matchId);
+  }
+  refreshPredictionStatus_(matchId);
+
+  if(bulkMode){
+    selectedBulkMatches.add(matchId);
+    const cb = document.getElementById(`bulk-check-${matchId}`);
+    if(cb) cb.checked = true;
+    const labelText = document.getElementById(`bulk-text-${matchId}`);
+    if(labelText) labelText.textContent = '✅ Incluido para envío masivo';
+    updateBulkBar();
+  }
+}
+
+async function submitPrediction(matchId){
+  if(playerActionBlocked_('prediction')) return;
+  if(!authedName){ alert('Confirma tu nombre primero.'); return; }
+  const match = matches.find(m => m.id === matchId);
+  if(isClosed(match.closeAt)){ alert('Este partido ya cerró.'); await loadMatches(); return; }
+
+  const homeVal = document.getElementById(`score-${matchId}-home`).value;
+  const awayVal = document.getElementById(`score-${matchId}-away`).value;
+  const home = parseScoreValue_(homeVal);
+  const away = parseScoreValue_(awayVal);
+  if(home === null || away === null){
+    alert('Marcador inválido. Usa números enteros entre 0 y 20.');
+    return;
+  }
+
+  const btn = document.getElementById('submit-'+matchId);
+  btn.disabled = true; btn.textContent = 'Enviando...';
+
+  const result = await apiPost({action:'savePrediction', matchId, name: authedName, home, away, pin: authedPin});
+  if(!result.ok){
+    alert(humanError_(result.error, 'No se pudo guardar tu pronóstico. Intenta nuevamente.'));
+    btn.disabled = false; btn.textContent = 'Enviar pronóstico';
+    return;
+  }
+  const hadMineBefore = (predictionsCache[matchId] || []).some(p=>normalizeName(p.name)===normalizeName(authedName));
+  updateLocalPrediction(matchId, authedName, home, away);
+  dirtyPredictionIds_.delete(matchId);
+  clearPredictionDraft_(matchId);
+  if(adminPredictionSummaryPollaId===currentPolla.id && !hadMineBefore){
+    adminPredictionSummaryCache[matchId] = Number(adminPredictionSummaryCache[matchId] || 0) + 1;
+  }
+  await renderMatches();
+  showToast_(hadMineBefore ? '✅ Pronóstico actualizado' : '✅ Pronóstico guardado');
+}
+
+async function sharePrediction(matchId){
+  const m = matches.find(x => x.id === matchId);
+  const preds = predictionsCache[matchId] || [];
+  const mine = preds.find(p => normalizeName(p.name) === normalizeName(authedName||''));
+  if(!mine) return;
+  const link = `${siteUrl()}?polla=${currentPolla.id}`;
+  let text, lines;
+  if(m.resultSubmitted){
+    text = `⚽ Partido ${m.matchNumber}: ${m.home} ${m.actualHome}-${m.actualAway} ${m.away}\nMi pronóstico fue ${mine.home}-${mine.away} → ¡Gané ${mine.points ?? 0} puntos! 🏆\n\n¡Únete a la Polla "TICO" # ${currentPolla.number} aquí! 👉 ${link}`;
+    lines = [
+      {text:`PARTIDO ${m.matchNumber}`, size:34, color:'rgba(246,243,234,0.7)'},
+      {text:`${m.home} ${m.actualHome} - ${m.actualAway} ${m.away}`, size:48, font:'Anton, sans-serif'},
+      {text:`Mi pronóstico: ${mine.home}-${mine.away}`, size:32, gap:8},
+      {text:`¡Gané ${mine.points ?? 0} puntos! 🏆`, size:40, color:'#F2C14E', font:'Anton, sans-serif', gap:30},
+    ];
+  } else {
+    text = `⚽ Ya envié mi pronóstico para ${m.home} vs ${m.away}: ${mine.home}-${mine.away} 😎\n\n¡Únete a la Polla "TICO" # ${currentPolla.number} aquí! 👉 ${link}`;
+    lines = [
+      {text:`PARTIDO ${m.matchNumber}`, size:34, color:'rgba(246,243,234,0.7)'},
+      {text:`${m.home} vs ${m.away}`, size:44, font:'Anton, sans-serif'},
+      {text:`Mi pronóstico: ${mine.home} - ${mine.away}`, size:38, color:'#F2C14E', gap:30},
+    ];
+  }
+  showGlobalLoader();
+  let blob;
+  try{ blob = await generatePredictionShareImage(m, mine, link); } finally { hideGlobalLoader(); }
+  await shareImageOrFallback(blob, text, `pronostico-partido-${m.matchNumber}.png`);
+}
+
+function sharePollaWhatsApp(){
+  const link = `${siteUrl()}?polla=${currentPolla.id}`;
+  const text = `⚽ ¡Únete a la Polla "TICO" # ${currentPolla.number}! 🏆\nPronostica los resultados y gana premios.\n👉 ${link}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+
+/* ============ ADMIN ============ */
+function clearNewPollaForm(){
+  document.getElementById('newPollaNumber').value = '';
+  document.getElementById('newPollaStatus').value = 'actual';
+  document.getElementById('newPollaStartDate').value = '';
+  document.getElementById('newPollaTotalMatches').value = '';
+  document.getElementById('newPollaImage').value = '';
+  document.getElementById('newPollaIsFree').checked = false;
+}
+// 👁️ Mismo ícono de ojo en ambos estados (como el de las contraseñas de
+// Google): abierto cuando la clave está oculta (clic para mostrarla),
+// cerrado cuando ya se está mostrando (clic para volver a ocultarla).
+const EYE_OPEN_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_CLOSED_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4 5 10 5c1.2 0 2.3-.2 3.3-.5M22 12s-1.6 2-4.2 3.5M12 17v3M6 15.5L4 18M18 15.5l2 2.5"/></svg>';
+async function openAdminGate(){
+  if(hasValidAdminSession_()){
+    if(!adminName) adminName = askAdminName_();
+    if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+      allPollasLoadedAt_ = Date.now();
+      allPollasScope_ = 'admin';
+    }
+    renderPollasAdminList();
+    renderSeasonInfoBox();
+    openOverlay('pollasAdminOverlay');
+    return;
+  }
+  const input = document.getElementById('gatePinInput');
+  input.value='';
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  input.dataset.ticoMasked = '1';
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = 'disc';
+  } else {
+    input.type = 'password';
+  }
+  document.getElementById('gatePinToggle').innerHTML = EYE_OPEN_SVG;
+  openOverlay('adminGateOverlay');
+}
+function toggleGatePinVisibility(){
+  const input = document.getElementById('gatePinInput');
+  const btn = document.getElementById('gatePinToggle');
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+
+  if(canMaskText){
+    // Mantener type=text evita que Chrome vuelva a clasificarlo como contraseña web.
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  input.focus();
+}
+async function checkGatePin(){
+  const pin = document.getElementById('gatePinInput').value;
+  const btn = document.querySelector('#adminGateOverlay .btn-primary');
+  btn.disabled = true; btn.textContent = 'Verificando...';
+  try{
+    const result = await apiPost({action:'authAdmin', pin});
+    if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
+    adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
+    adminName = askAdminName_();
+    closeOverlay('adminGateOverlay');
+    // OPT V15: si la lista de Pollas se cargó hace segundos en el landing, no
+    // la pedimos otra vez solo por abrir Admin. Si ya envejeció, sí se refresca.
+    if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+      allPollasLoadedAt_ = Date.now();
+      allPollasScope_ = 'admin';
+    }
+    renderPollasAdminList();
+    renderSeasonInfoBox();
+    openOverlay('pollasAdminOverlay');
+  } finally { btn.disabled = false; btn.textContent = 'Entrar'; }
+}
+// Mensaje amigable para los distintos errores que puede devolver authAdmin.
+function adminAuthErrorMessage_(result){
+  if(result.error === 'LOCKED'){
+    return `🔒 Demasiados intentos fallidos. El acceso admin quedó bloqueado por ${result.minutesLeft} minuto(s). Intenta de nuevo más tarde.`;
+  }
+  if(result.attemptsLeft !== undefined){
+    return `Clave incorrecta. Te quedan ${result.attemptsLeft} intento(s) antes de que se bloquee el acceso admin.`;
+  }
+  return 'Clave incorrecta.';
+}
+let pendingAdminRenew_ = null;
+function toggleAdminRenewPinVisibility_(){
+  const input = document.getElementById('adminRenewPinInput');
+  const btn = document.getElementById('adminRenewPinToggle');
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  input.focus();
+}
+function cancelAdminRenew_(){
+  closeOverlay('adminRenewOverlay');
+  const pending = pendingAdminRenew_;
+  pendingAdminRenew_ = null;
+  if(pending) pending.resolve(false);
+}
+function renewAdminSession_(){
+  if(hasValidAdminSession_()){
+    updateAdminSessionCountdown_();
+    return Promise.resolve(true);
+  }
+  if(pendingAdminRenew_) return pendingAdminRenew_.promise;
+  let resolveFn;
+  const promise = new Promise(resolve=>{ resolveFn=resolve; });
+  pendingAdminRenew_ = {resolve:resolveFn, promise};
+  const input = document.getElementById('adminRenewPinInput');
+  input.value='';
+  input.dataset.ticoMasked='1';
+  input.type='text';
+  input.style.webkitTextSecurity='disc';
+  document.getElementById('adminRenewPinToggle').innerHTML = EYE_OPEN_SVG;
+  openOverlay('adminRenewOverlay');
+  setTimeout(()=>input.focus(), 50);
+  return promise;
+}
+async function submitAdminRenew_(){
+  if(!pendingAdminRenew_) return;
+  const pin = document.getElementById('adminRenewPinInput').value;
+  if(!pin){ alert('Escribe la clave de administrador.'); return; }
+  const btn = document.getElementById('adminRenewBtn');
+  btn.disabled=true; btn.textContent='Renovando...';
+  try{
+    const result = await apiPost({action:'authAdmin', pin}, 0, true, true);
+    if(!result?.ok){ alert(adminAuthErrorMessage_(result || {})); return; }
+    adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
+    const pending = pendingAdminRenew_;
+    pendingAdminRenew_ = null;
+    closeOverlay('adminRenewOverlay');
+    updateAdminSessionCountdown_();
+    showToast_('✓ Sesión Admin renovada por 30 min');
+    pending.resolve(true);
+  } finally {
+    btn.disabled=false; btn.textContent='Renovar 30 min';
+  }
+}
+
+let pendingAdminConfirm_ = null;
+function toggleAdminConfirmPinVisibility_(){
+  const input = document.getElementById('adminConfirmPinInput');
+  const btn = document.getElementById('adminConfirmPinToggle');
+  const canMaskText = !!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'));
+  const currentlyMasked = input.dataset.ticoMasked !== '0';
+  if(canMaskText){
+    input.type = 'text';
+    input.style.webkitTextSecurity = currentlyMasked ? 'none' : 'disc';
+  } else {
+    input.type = currentlyMasked ? 'text' : 'password';
+  }
+  input.dataset.ticoMasked = currentlyMasked ? '0' : '1';
+  btn.innerHTML = currentlyMasked ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
+  input.focus();
+}
+function cancelAdminConfirmation_(){
+  closeOverlay('adminConfirmOverlay');
+  const pending = pendingAdminConfirm_;
+  pendingAdminConfirm_ = null;
+  if(pending) pending.resolve(null);
+}
+async function requireAdminConfirmation_(purpose, message){
+  if(!hasValidAdminSession_()){
+    const renewed = await renewAdminSession_();
+    if(!renewed) return null;
+  }
+  if(pendingAdminConfirm_) return null;
+  return new Promise(resolve=>{
+    pendingAdminConfirm_ = {purpose, resolve};
+    const input = document.getElementById('adminConfirmPinInput');
+    input.value = '';
+    input.dataset.ticoMasked = '1';
+    input.type = 'text';
+    input.style.webkitTextSecurity = 'disc';
+    document.getElementById('adminConfirmPinToggle').innerHTML = EYE_OPEN_SVG;
+    document.getElementById('adminConfirmMessage').textContent = message || 'Esta acción necesita volver a verificar tu clave de administrador.';
+    openOverlay('adminConfirmOverlay');
+    setTimeout(()=>input.focus(), 50);
+  });
+}
+async function submitAdminConfirmation_(){
+  if(!pendingAdminConfirm_) return;
+  const pin = document.getElementById('adminConfirmPinInput').value;
+  if(!pin){ alert('Escribe la clave de administrador.'); return; }
+  const btn = document.getElementById('adminConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Verificando...';
+  try{
+    const purpose = pendingAdminConfirm_.purpose;
+    const result = await apiPost({action:'authAdminConfirm', pin, confirmAction:purpose}, 0, true);
+    if(!result?.ok){ alert(adminAuthErrorMessage_(result || {})); return; }
+    const pending = pendingAdminConfirm_;
+    pendingAdminConfirm_ = null;
+    closeOverlay('adminConfirmOverlay');
+    pending.resolve(result.confirmToken || null);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Confirmar';
+  }
+}
+async function withSensitiveAdminConfirmation_(purpose, message, fn){
+  const token = await requireAdminConfirmation_(purpose, message);
+  if(!token) return null;
+  adminStrongConfirmToken_ = token;
+  try{ return await fn(); }
+  finally { if(adminStrongConfirmToken_ === token) adminStrongConfirmToken_ = null; }
+}
+
+// Pregunta el nombre de quien administra, para que quede en el historial de
+// cambios quién hizo cada acción. Si cancela, queda como "Admin".
+function askAdminName_(){
+  const name = prompt('¿Cuál es tu nombre? (queda registrado en el historial de cambios)');
+  return (name && name.trim()) ? name.trim() : 'Admin';
+}
+async function addPolla(){
+  const number = document.getElementById('newPollaNumber').value.trim();
+  const status = document.getElementById('newPollaStatus').value;
+  const startDateRaw = document.getElementById('newPollaStartDate').value;
+  const startDate = startDateRaw ? peruInputToISOString_(startDateRaw) : '';
+  const totalMatches = document.getElementById('newPollaTotalMatches').value.trim();
+  const file = document.getElementById('newPollaImage').files[0];
+  const isFree = document.getElementById('newPollaIsFree').checked;
+  if(!number){ alert('Escribe el número de la Polla.'); return; }
+  const dup = allPollas.find(p => String(p.number).trim() === number);
+  if(dup){ alert(`Ya existe una Polla con el número ${number}.`); return; }
+
+  const params = {action:'addPolla', number, status, startDate, totalMatches, isFreePolla: isFree.toString(), pin: adminPin, adminName: adminName};
+  if(file){ params.imageBase64 = await compressImage(file, 700, 0.75); params.imageMime = 'image/jpeg'; }
+  const result = await apiPost(params);
+  if(!result.ok){ alert(result.error || 'No se pudo crear.'); return; }
+  clearNewPollaForm();
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+  renderPollasAdminList();
+  renderLanding();
+}
+function renderPollasAdminList(){
+  const list = document.getElementById('pollasAdminList');
+  if(allPollas.length === 0){ list.innerHTML = '<p class="hint">Sin Pollas creadas todavía.</p>'; return; }
+  list.innerHTML = allPollas.map(p => `
+    <div class="list-item">
+      <div class="top-row">
+        <div class="info">
+          <span>Polla # ${escapeHtml(p.number)} <span class="status-tag ${p.status}">${p.status === 'actual' ? 'activa' : p.status}</span>${p.isFreePolla ? ' <span class="status-tag free-tag">🎁 gratuita</span>' : ''}${p.isArchived ? ' <span class="status-tag archived-tag">🗄️ archivada</span>' : ''}
+          <small>${p.participantCount} participantes · ${p.matchCount}${p.totalMatches ? ' / ' + escapeHtml(p.totalMatches) : ''} partidos${p.startDate ? ' · inicia ' + fmtDate(p.startDate) : ''}</small></span>
+        </div>
+        <div class="btn-row">
+          ${(!p.isArchived && p.status !== 'finalizada') ? `
+          <button class="icon-btn" title="Editar datos" onclick="toggleEditPolla('${p.id}')">✏️</button>
+          <button class="icon-btn" title="Marcar como activa" onclick="setPollaStatus('${p.id}','actual')">✅</button>
+          <button class="icon-btn" title="Marcar próximamente" onclick="setPollaStatus('${p.id}','proximamente')">⏳</button>
+          <button class="icon-btn" title="Finalizar" onclick="setPollaStatus('${p.id}','finalizada')">🏁</button>` : ''}
+          ${(p.status === 'finalizada' && !p.isArchived) ? `<button class="icon-btn" title="Reabrir para corregir" onclick="reopenPollaAction('${p.id}')">🔓 Reabrir</button><button class="icon-btn" title="Archivar" onclick="archivePollaAction('${p.id}')">🗄️</button>` : ''}
+          ${p.isArchived ? `<button class="icon-btn" title="Desarchivar para revisión (seguirá finalizada)" onclick="desarchivarPollaAction('${p.id}')">📤</button>` : ''}
+          <button class="icon-btn" title="Eliminar" onclick="deletePolla('${p.id}')">🗑️</button>
+        </div>
+      </div>
+      ${(p.isArchived || p.status === 'finalizada') ? '' : `
+      <div class="edit-match-box" id="editpolla-${p.id}">
+        <label>Número</label><input id="editpolla-num-${p.id}" type="text" value="${escapeHtml(p.number)}">
+        <label>Total partidos (meta)</label><input id="editpolla-total-${p.id}" type="number" value="${p.totalMatches || ''}">
+        <label>Fecha y hora de inicio</label><input id="editpolla-date-${p.id}" type="datetime-local" value="${toLocalInputValue(p.startDate)}">
+        <label>Reemplazar imagen / logo (opcional)</label><input id="editpolla-img-${p.id}" type="file" accept="image/*">
+        <div class="checkbox-row"><input id="editpolla-free-${p.id}" type="checkbox" ${p.isFreePolla ? 'checked' : ''}><label for="editpolla-free-${p.id}" style="margin:0;">🎁 Polla gratuita de cierre de temporada (solo clasificados)</label></div>
+        <button class="btn-secondary" onclick="savePollaEdit('${p.id}')">Guardar cambios</button>
+      </div>`}
+    </div>
+  `).join('');
+}
+// 🗄️ Archiva una Polla ya finalizada: "duerme" sus partidos y pronósticos
+// en un solo bloque, para que la app no se ponga lenta con el tiempo, SIN
+// borrar su historial — sigue siendo 100% visible desde "Pollas anteriores".
+// Queda congelada (no se le puede editar nada) hasta que se desarchive.
+async function archivePollaAction(id){
+  if(!confirm('¿Archivar esta Polla?\n\nSe conserva completa para consulta, pero quedará congelada para edición.')) return;
+  const result = await apiPost({action:'archivePolla', id, pin: adminPin, adminName: adminName});
+  if(!result.ok){ alert(result.error || 'No se pudo archivar.'); return; }
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  renderPollasAdminList();
+  alert('🗄️ Polla archivada.');
+}
+async function desarchivarPollaAction(id){
+  if(!confirm('¿Desarchivar esta Polla?\n\nSaldrá del archivo, pero seguirá FINALIZADA y protegida. Para modificar datos deportivos después deberás usar “Reabrir para corregir”.')) return;
+  const result = await apiPost({action:'desarchivarPolla', id, pin: adminPin, adminName: adminName});
+  if(!result.ok){ alert(result.error || 'No se pudo desarchivar.'); return; }
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  renderPollasAdminList();
+  alert('📤 Polla desarchivada. Sigue finalizada y protegida; usa “Reabrir” si necesitas corregirla.');
+}
+async function reopenPollaAction(id){
+  if(!confirm('🔓 Reabrir para corregir\n\nLa Polla volverá a estado ACTUAL. Los campeones registrados por esta Polla se retirarán temporalmente hasta que vuelvas a finalizarla.\n\n¿Continuar?')) return;
+  await withSensitiveAdminConfirmation_('reopenPolla','Confirma tu clave para reabrir una Polla finalizada.', async()=>{
+    const result=await apiPost({action:'editPolla',id,status:'actual',pin:adminPin,adminName:adminName});
+    if(!result.ok){alert(result.error||'No se pudo reabrir.');return;}
+    allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
+  });
+}
+function toggleEditPolla(id){ document.getElementById('editpolla-'+id).classList.toggle('show'); }
+async function savePollaEdit(id){
+  const number = document.getElementById(`editpolla-num-${id}`).value.trim();
+  const totalMatches = document.getElementById(`editpolla-total-${id}`).value.trim();
+  const startDateRaw = document.getElementById(`editpolla-date-${id}`).value;
+  const startDate = startDateRaw ? peruInputToISOString_(startDateRaw) : '';
+  const file = document.getElementById(`editpolla-img-${id}`).files[0];
+  const isFree = document.getElementById(`editpolla-free-${id}`).checked;
+  if(!number){ alert('El número no puede estar vacío.'); return; }
+  const dup = allPollas.find(p => p.id !== id && String(p.number).trim() === number);
+  if(dup){ alert(`Ya existe otra Polla con el número ${number}.`); return; }
+  const params = {action:'editPolla', id, number, startDate, totalMatches, isFreePolla: isFree.toString(), pin: adminPin, adminName: adminName};
+  if(file){ params.imageBase64 = await compressImage(file, 700, 0.75); params.imageMime = 'image/jpeg'; }
+  const result = await apiPost(params);
+  if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  // 🏆 Si se editó la Polla que se está viendo ahora mismo, refleja el
+  // cambio del botón de Ganadores de inmediato, sin tener que salir y
+  // volver a entrar a la Polla.
+  if(currentPolla && currentPolla.id === id){
+    currentPolla = allPollas.find(p => p.id === id) || currentPolla;
+    updateWinnersButtonVisibility();
+  }
+  renderPollasAdminList(); renderLanding();
+  alert('✅ Polla actualizada.');
+}
+async function setPollaStatus(id,status){
+  if(status==='finalizada'){
+    const p=allPollas.find(x=>x.id===id); const ms=await apiGet('getMatches',{pollaId:id}).catch(()=>[]); const pending=ms.filter(m=>!m.resultSubmitted&&!m.isCanceled);
+    if(pending.length){alert(`❌ No se puede finalizar la Polla #${p?.number||''}. Faltan: ${pending.map(m=>'Partido #'+m.matchNumber).join(', ')}.`);return;}
+    if(!confirm('✅ Todos los partidos están resueltos o cancelados.\n\n¿Finalizar y archivar esta Polla?'))return;
+  }
+  const result=await apiPost({action:'editPolla',id,status,pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo cambiar el estado.');return;}
+  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);renderPollasAdminList();renderLanding();
+}
+async function deletePolla(id){
+  if(!confirm('⚠️ Esto borra la Polla PERMANENTEMENTE, junto con todos sus partidos, pronósticos y participantes. No se puede deshacer.\n\n¿Seguro que quieres continuar?')) return;
+  await withSensitiveAdminConfirmation_('deletePolla','Confirma tu clave para eliminar esta Polla permanentemente.', async()=>{
+    const params = {action:'deletePolla', id, pin: adminPin, adminName: adminName};
+    const polla = allPollas.find(p => p.id === id);
+    if(polla && polla.status === 'finalizada'){
+      params.keepPoints = confirm('¿Quieres CONSERVAR los puntos de esta Polla en la tabla acumulada del año?\n\n✅ Aceptar → Conservar (se suman al arrastre)\n❌ Cancelar → Borrarlos junto con la Polla').toString();
+      params.keepTitle = confirm('¿Quieres CONSERVAR el título de campeón de esta Polla en la tabla de Ganadores?\n\n✅ Aceptar → Conservar el título\n❌ Cancelar → Quitarle esa victoria al campeón').toString();
+    }
+    const result = await apiPost(params);
+    if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
+    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+    renderPollasAdminList(); renderLanding();
+  });
+}
+
+/* ============ ADMIN: DENTRO DE UNA POLLA ============ */
+function clearNewMatchForm(){
+  ['newMatchNumber','newHome','newAway','newImage','newClose'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('newIsStar').checked = false;
+}
+async function openAdmin(){
+  // D1.1: si ya existe una sesión Admin válida, reutilizarla también al abrir
+  // el panel interno de una Polla. Antes este camino seguía pidiendo la clave
+  // siempre, aunque openAdminGate() ya hubiera creado una sesión temporal.
+  if(!hasValidAdminSession_()){
+    const pin = prompt('Clave de administrador:');
+    if(pin === null) return;
+    const result = await apiPost({action:'authAdmin', pin});
+    if(!result.ok){ alert(adminAuthErrorMessage_(result)); return; }
+    adminPin = pin;
+    adminSessionToken = result.adminSession || null;
+    adminSessionExpiresAt = result.expiresAt ? new Date(result.expiresAt).getTime() : 0;
+    if(adminSessionToken){
+      sessionStorage.setItem('tico:adminSession', adminSessionToken);
+      if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
+    }
+  }
+
+  if(!adminName) adminName = askAdminName_();
+  switchAdminTab('tabResumen');
+  renderAdminOverview_();
+  renderParticipantsList();
+  // Mismo comportamiento que la vista del jugador: HOY abierto; cualquier otro día recogido.
+  collapsedAdminGroups = computeDefaultCollapsedGroups();
+  renderAdminMatchList();
+  document.getElementById('premio1Input').value = currentPolla.premio1 || '';
+  document.getElementById('premio2Input').value = currentPolla.premio2 || '';
+  document.getElementById('premio3Input').value = currentPolla.premio3 || '';
+  document.getElementById('showWinnersLiveToggle').checked = !!currentPolla.showWinnersLive;
+  applyArchivedAdminLock_();
+  openOverlay('adminOverlay');
+}
+// 🔒 Si la Polla está archivada, el panel de admin queda en modo solo-lectura:
+// se puede seguir viendo todo (tabla, partidos, participantes, premios), pero
+// no se puede tocar nada hasta desarchivarla. El backend ya rechaza estas
+// acciones igual, pero esto evita que el admin haga clic en botones que no
+// van a funcionar y no entienda por qué.
+function sportsLocked_(){
+  return !!(currentPolla && (currentPolla.isArchived || currentPolla.status === 'finalizada'));
+}
+function applyArchivedAdminLock_(){
+  const archived = !!(currentPolla && currentPolla.isArchived);
+  const finalized = !!(currentPolla && currentPolla.status === 'finalizada');
+  const locked = archived || finalized;
+  document.querySelectorAll('#adminOverlay .archived-lock').forEach(el => el.style.display = locked ? 'none' : '');
+  // El mini-formulario de "Corregir premios" es al revés: solo tiene sentido
+  // mostrarlo cuando la Polla SÍ está archivada (si no, ya está el form normal
+  // de premios arriba, dentro de .archived-lock).
+  document.getElementById('archivedPremiosFix').style.display = archived ? '' : 'none';
+  if(!archived) document.getElementById('archivedPremiosForm').style.display = 'none';
+  let banner = document.getElementById('archivedAdminBanner');
+  if(locked){
+    if(!banner){
+      banner = document.createElement('p');
+      banner.id = 'archivedAdminBanner';
+      banner.className = 'hint';
+      document.getElementById('adminModalTitle').insertAdjacentElement('afterend', banner);
+    }
+    banner.textContent = archived
+      ? '🗄️ Esta Polla está archivada: puedes verla, pero no editar datos deportivos. Desarchívala desde “Administrar Pollas” y luego usa “Reabrir para corregir”.'
+      : '🏁 Esta Polla sigue FINALIZADA: está protegida contra cambios deportivos. Usa “Reabrir para corregir” desde “Administrar Pollas” si necesitas modificarla.';
+  } else if(banner){
+    banner.remove();
+  }
+}
+function switchAdminTab(tabId){
+  document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+  document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
+  if(tabId === 'tabResumen'){ renderAdminOverview_(); ensureAdminSessionCountdown_(); }
+  if(tabId === 'tabSalud') refreshSystemHealth_();
+  if(tabId === 'tabDatos'){ refreshSecureBackupStatus_(false); refreshStorageCleanupStatus_(false); refreshFinalArchiveAuditStatus_(false); }
+}
+
+function renderAdminOverview_(){
+  const grid = document.getElementById('adminOverviewGrid');
+  const health = document.getElementById('adminHealthList');
+  const session = document.getElementById('adminSessionMini');
+  if(!grid || !health || !currentPolla) return;
+  renderAdminConfig_();
+
+  const parts = Array.isArray(participantsCache) ? participantsCache : [];
+  const participantTotal = parts.length || Number(currentPolla.participantCount || 0);
+  const paid = parts.length ? parts.filter(p=>!!p.paid).length : null;
+  const unpaid = paid === null ? null : Math.max(0, participantTotal-paid);
+
+  const validMatches = Array.isArray(matches) ? matches.filter(m=>!m.isCanceled) : [];
+  const totalMatches = validMatches.length;
+  const resolved = validMatches.filter(m=>!!m.resultSubmitted).length;
+  const open = validMatches.filter(m=>!m.resultSubmitted && !isClosed(m.closeAt)).length;
+  const awaiting = validMatches.filter(m=>!m.resultSubmitted && isClosed(m.closeAt)).length;
+  const canceled = Array.isArray(matches) ? matches.filter(m=>!!m.isCanceled).length : 0;
+  const target = Number(currentPolla.totalMatches || 0);
+
+  const paySub = paid === null ? 'Carga participantes para ver pagos' : `${paid} pagaron · ${unpaid} pendientes`;
+  grid.innerHTML = `
+    <div class="admin-overview-card"><div class="k">Participantes</div><div class="v">${participantTotal}</div><div class="s">${paySub}</div></div>
+    <div class="admin-overview-card"><div class="k">Partidos</div><div class="v">${totalMatches}${target ? ' / '+target : ''}</div><div class="s">${open} abiertos · ${resolved} resueltos</div></div>
+    <div class="admin-overview-card"><div class="k">Por resolver</div><div class="v">${awaiting}</div><div class="s">Cerrados esperando resultado</div></div>
+    <div class="admin-overview-card"><div class="k">Estado</div><div class="v" style="font-size:16px;margin-top:6px;">${currentPolla.isArchived?'Archivada':(currentPolla.status==='finalizada'?'Finalizada':(currentPolla.status==='actual'?'Activa':'Próxima'))}</div><div class="s">${canceled ? canceled+' cancelado(s)' : 'Sin incidencias registradas'}</div></div>`;
+
+  const checks = [];
+  if(totalMatches === 0) checks.push(['warn','⚠️ Todavía no hay partidos cargados en esta Polla.']);
+  else checks.push(['ok',`✅ ${totalMatches} partido(s) cargado(s).`]);
+  if(target && totalMatches < target) checks.push(['warn',`⏳ Faltan ${target-totalMatches} partido(s) para llegar a la meta de ${target}.`]);
+  if(awaiting > 0) checks.push(['warn',`⚽ Hay ${awaiting} partido(s) cerrados esperando resultado.`]);
+  else if(resolved > 0) checks.push(['ok','✅ No hay resultados cerrados pendientes de subir.']);
+  if(unpaid !== null && unpaid > 0) checks.push(['warn',`💳 ${unpaid} participante(s) siguen pendientes de pago.`]);
+  else if(unpaid === 0 && participantTotal > 0) checks.push(['ok','✅ Todos los participantes figuran como pagados.']);
+  if(currentPolla.status === 'actual' && open === 0 && awaiting === 0 && resolved > 0) checks.push(['warn','🏁 No quedan partidos abiertos. Revisa si ya corresponde finalizar la Polla.']);
+  if(currentPolla.isArchived) checks.push(['ok','🗄️ Polla archivada y protegida contra cambios deportivos.']);
+  health.innerHTML = checks.map(([kind,text])=>`<div class="admin-health-item ${kind}">${text}</div>`).join('');
+
+  if(session){
+    updateAdminSessionCountdown_();
+    ensureAdminSessionCountdown_();
+  }
+}
+
+let systemHealthBusy_ = false;
+let latestSystemHealthSnapshot_ = null;
+function healthCard_(label, value, sub, good=true){
+  return `<div class="system-health-card ${good?'good':'bad'}"><div class="k">${escapeHtml(label)}</div><div class="v">${escapeHtml(String(value ?? '—'))}</div><div class="s">${escapeHtml(sub || '')}</div></div>`;
+}
+
+function latencyLabel_(ms, kind='api'){
+  const n=Number(ms || 0);
+  const cuts = kind==='db' ? [250,800,1800] : [700,1500,3000];
+  if(n <= cuts[0]) return {text:'Excelente',good:true};
+  if(n <= cuts[1]) return {text:'Normal',good:true};
+  if(n <= cuts[2]) return {text:'Lenta',good:false};
+  return {text:'Muy lenta',good:false};
+}
+function median_(values){
+  const arr=values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
+  if(!arr.length) return 0;
+  const m=Math.floor(arr.length/2);
+  return arr.length%2 ? arr[m] : Math.round((arr[m-1]+arr[m])/2);
+}
+function renderRecentHealth_(){
+  const box=document.getElementById('systemHealthRecent');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const perf = samples.length ? `<div class="system-health-recent-item">Últimas ${samples.length} revisiones · mediana API <b>${apiMed} ms</b> · DB <b>${dbMed} ms</b></div>` : '';
+  const issues = recentTechnicalIssues_.length
+    ? recentTechnicalIssues_.slice(0,3).map(x=>`<div class="system-health-recent-item"><b>${escapeHtml(x.requestId || 'Sin código')}</b> · ${escapeHtml(new Date(x.at).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}))}</div>`).join('')
+    : '<div class="system-health-recent-empty">Sin fallos técnicos recientes en esta sesión.</div>';
+  box.innerHTML=`<div class="system-health-recent-title">Historial reciente</div>${perf}${issues}`;
+}
+
+function renderOperationalHealth_(ctx={}){
+  const box=document.getElementById('systemHealthOperational');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const alerts=[];
+  let level='good';
+
+  if(ctx.checked){
+    if(!ctx.frontOk) alerts.push('Frontend y backend no coinciden. Revisa que index.html y la Edge Function sean de la misma versión.');
+    if(!ctx.swOk) alerts.push('El Service Worker está desactualizado. Espera el aviso de actualización o recarga la app.');
+    if(!ctx.dbOk) alerts.push('La base de datos no coincide o no respondió. Revisa el SQL de esta versión.');
+  }
+  if(apiMed>3000) alerts.push(`La API está muy lenta de forma sostenida (mediana ${apiMed} ms). Repite la prueba con buena conexión.`);
+  else if(apiMed>1500) alerts.push(`La API está algo lenta (mediana ${apiMed} ms), aunque la app puede seguir operando.`);
+  if(dbMed>1800) alerts.push(`La base está muy lenta (mediana ${dbMed} ms). Conviene revisar Supabase si persiste.`);
+  else if(dbMed>800) alerts.push(`La base está algo lenta (mediana ${dbMed} ms).`);
+  if(recentTechnicalIssues_.length>=2) alerts.push(`Hubo ${recentTechnicalIssues_.length} fallos técnicos recientes en esta sesión. Usa sus códigos TICO si necesitas investigarlos.`);
+  else if(recentTechnicalIssues_.length===1) alerts.push('Hubo 1 fallo técnico reciente en esta sesión. Si no se repite, puede haber sido puntual.');
+
+  const hardProblem = ctx.checked && (!ctx.frontOk || !ctx.swOk || !ctx.dbOk);
+  if(hardProblem || dbMed>1800 || recentTechnicalIssues_.length>=3) level='bad';
+  else if(alerts.length) level='warn';
+
+  let title='✅ Operación normal';
+  let sub='Versiones, conexión y rendimiento se ven estables.';
+  if(level==='warn'){ title='⚠️ Atención recomendada'; sub='La app puede seguir funcionando, pero hay algo que conviene vigilar.'; }
+  if(level==='bad'){ title='⛔ Revisión necesaria'; sub='Hay una condición que merece atención antes de dar el sistema por saludable.'; }
+
+  box.className=`system-health-ops ${level}`;
+  box.innerHTML=`<div class="system-health-ops-title">${title}</div><div class="system-health-ops-sub">${sub}</div>${alerts.length?`<div class="system-health-alerts">${alerts.slice(0,4).map(x=>`<div class="system-health-alert">${escapeHtml(x)}</div>`).join('')}</div>`:''}`;
+}
+
+function renderHealthReadiness_(ctx={}){
+  const box=document.getElementById('systemHealthReadiness');
+  if(!box) return;
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const online=navigator.onLine !== false;
+  const checks=[
+    ['Conexión del dispositivo', online, online?'En línea':'Sin conexión'],
+    ['Versiones sincronizadas', !!ctx.versionsOk, ctx.versionsOk?'Correctas':'Revisar'],
+    ['Base de datos', !!ctx.dbOk, ctx.dbOk?'Disponible':'Revisar'],
+    ['Rendimiento reciente', (!samples.length || (apiMed<=1500 && dbMed<=800)), !samples.length?'Sin muestras':(apiMed<=1500 && dbMed<=800?'Estable':'Vigilar')],
+    ['Fallos técnicos recientes', recentTechnicalIssues_.length===0, recentTechnicalIssues_.length===0?'Ninguno':`${recentTechnicalIssues_.length} detectado${recentTechnicalIssues_.length===1?'':'s'}`],
+  ];
+  box.innerHTML=`<div class="system-health-ready-title">Chequeo para operar</div>${checks.map(([label,ok,status])=>`<div class="system-health-check"><span>${escapeHtml(label)}</span><span class="status ${ok?'ok':'warn'}">${ok?'✓ ':''}${escapeHtml(status)}</span></div>`).join('')}`;
+}
+
+async function copySystemDiagnosis_(){
+  const snap=latestSystemHealthSnapshot_ || {};
+  const samples=healthLatencySamples_.slice(-5);
+  const apiMed=median_(samples.map(x=>x.apiMs));
+  const dbMed=median_(samples.map(x=>x.dbMs));
+  const lines=[
+    `LaPollaTICO diagnóstico · ${APP_VERSION}`,
+    `Frontend: ${APP_VERSION}`,
+    `Service Worker: ${snap.swVersion || 'Sin revisar'}`,
+    `Backend: ${snap.backendVersion || 'Sin revisar'}`,
+    `Base de datos: ${snap.dbVersion || 'Sin revisar'}`,
+    `API: ${snap.apiMs != null ? snap.apiMs+' ms' : 'Sin revisar'}`,
+    `DB: ${snap.dbMs != null ? snap.dbMs+' ms' : 'Sin revisar'}`,
+    `Mediana reciente API/DB: ${samples.length ? `${apiMed} / ${dbMed} ms` : 'Sin muestras'}`,
+    `Última petición: ${lastApiRequestId_ || 'Ninguna'}`,
+    `Último error técnico: ${lastTechnicalIssue_?.requestId || 'Ninguno'}`,
+    `Conexión: ${navigator.onLine===false?'Offline':'Online'}`,
+    `Hora local: ${new Date().toLocaleString('es-PE')}`,
+  ];
+  const text=lines.join('\n');
+  try{
+    await navigator.clipboard.writeText(text);
+    if(typeof showToast==='function') showToast('Diagnóstico copiado.'); else alert('Diagnóstico copiado.');
+  }catch(_){
+    try{
+      const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      if(typeof showToast==='function') showToast('Diagnóstico copiado.'); else alert('Diagnóstico copiado.');
+    }catch(__){ alert(text); }
+  }
+}
+
+async function refreshSystemHealth_(){
+  if(systemHealthBusy_) return;
+  const state=document.getElementById('systemHealthState');
+  const checked=document.getElementById('systemHealthChecked');
+  const versions=document.getElementById('systemHealthVersions');
+  const latency=document.getElementById('systemHealthLatency');
+  if(!state || !checked || !versions || !latency) return;
+  renderRecentHealth_();
+  renderOperationalHealth_();
+  renderHealthReadiness_();
+  systemHealthBusy_=true;
+  state.textContent='Revisando…';
+  checked.textContent='Comprobando frontend, Service Worker, backend y base de datos.';
+  versions.innerHTML=''; latency.innerHTML='';
+  const started=performance.now();
+  try{
+    const result=await apiGet('getSystemHealth',{},0,true,false);
+    const edgeMs=Math.max(0,Math.round(performance.now()-started));
+    let swVersion='Sin controlador';
+    try{
+      if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+        swVersion=(await getWorkerVersion_(navigator.serviceWorker.controller)) || 'Desconocida';
+      }
+    }catch(_){ swVersion='Desconocida'; }
+
+    if(!result?.ok){
+      state.textContent='⚠️ Revisión incompleta';
+      checked.textContent=result?.error || 'No se pudo comprobar el sistema.';
+      versions.innerHTML=healthCard_('Frontend',APP_VERSION,'Versión cargada',true)+healthCard_('Service Worker',swVersion,'Controlador actual',false);
+      latency.innerHTML=healthCard_('Respuesta API',`${edgeMs} ms`,'Tiempo desde este dispositivo',false);
+      renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
+      latestSystemHealthSnapshot_={swVersion,backendVersion:null,dbVersion:null,apiMs:edgeMs,dbMs:null};
+      renderHealthReadiness_({versionsOk:false,dbOk:false});
+      return;
+    }
+
+    const backendVersion=String(result.backendVersion || 'Desconocida');
+    const dbVersion=String(result.dbSchemaVersion || 'Desconocida');
+    const frontOk=APP_VERSION===backendVersion;
+    const swOk=swVersion===APP_VERSION;
+    const dbOk=!!result.dbOk && dbVersion===APP_VERSION;
+    const allOk=frontOk && swOk && dbOk;
+    state.textContent=allOk ? '✅ Sistema sincronizado' : '⚠️ Revisar versiones';
+    checked.textContent=`Última revisión: ${new Date().toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+    versions.innerHTML=
+      healthCard_('Frontend',APP_VERSION,frontOk?'Coincide':'No coincide',frontOk)+
+      healthCard_('Service Worker',swVersion,swOk?'Coincide':'No coincide',swOk)+
+      healthCard_('Backend',backendVersion,frontOk?'Coincide':'No coincide',frontOk)+
+      healthCard_('Base de datos',dbVersion,dbOk?'Esquema correcto':'Revisar SQL',dbOk);
+    const dbMs=Number(result.dbLatencyMs ?? 0);
+    const serverMs=Number(result.serverProcessingMs ?? 0);
+    const apiClass=latencyLabel_(edgeMs,'api');
+    const dbClass=latencyLabel_(dbMs,'db');
+    healthLatencySamples_.push({apiMs:edgeMs,dbMs,at:Date.now()});
+    if(healthLatencySamples_.length>5) healthLatencySamples_.shift();
+    latency.innerHTML=
+      healthCard_('Respuesta API',`${edgeMs} ms`,apiClass.text,apiClass.good)+
+      healthCard_('Consulta DB',`${dbMs} ms`,dbClass.text,dbClass.good)+
+      healthCard_('Procesamiento servidor',`${serverMs} ms`,'Dentro de la Edge Function',serverMs<1200)+
+      healthCard_('Base de datos',result.dbOk?'Conectada':'Error',result.dbOk?'Lectura correcta':'No respondió',!!result.dbOk)+
+      healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime)+
+      healthCard_('Última petición',lastApiRequestId_ || '—','Código de diagnóstico',true)+
+      healthCard_('Último error',lastTechnicalIssue_?.requestId || 'Ninguno',lastTechnicalIssue_ ? 'Referencia para soporte' : 'Sin errores técnicos en esta sesión',!lastTechnicalIssue_);
+    renderRecentHealth_();
+    renderOperationalHealth_({checked:true,frontOk,swOk,dbOk});
+    latestSystemHealthSnapshot_={swVersion,backendVersion,dbVersion,apiMs:edgeMs,dbMs,serverMs,checkedAt:Date.now()};
+    renderHealthReadiness_({versionsOk:allOk,dbOk:!!result.dbOk});
+  }catch(err){
+    state.textContent='⚠️ Sin respuesta';
+    checked.textContent='No se pudo completar la revisión.';
+    renderRecentHealth_();
+    renderOperationalHealth_({checked:true,frontOk:true,swOk:false,dbOk:false});
+    latestSystemHealthSnapshot_={apiMs:null,dbMs:null};
+    renderHealthReadiness_({versionsOk:false,dbOk:false});
+  }finally{
+    systemHealthBusy_=false;
+  }
+}
+
+// 🏆 Guarda el toggle de "Ganadores en vivo" apenas se marca/desmarca, sin
+// esperar a que el admin toque "Guardar" en ningún otro lado (a diferencia
+// de los premios, este es un interruptor de sí/no, se siente raro que
+// necesite un botón de guardar aparte). Actualiza currentPolla y el botón
+// del usuario al toque.
+async function toggleShowWinnersLive(checked){
+  const result = await apiPost({action:'editPolla', id: currentPolla.id, showWinnersLive: checked.toString(), pin: adminPin, adminName: adminName});
+  if(!result.ok){
+    alert(result.error || 'No se pudo guardar.');
+    document.getElementById('showWinnersLiveToggle').checked = !checked; // revierte el checkbox si falló
+    return;
+  }
+  currentPolla.showWinnersLive = checked;
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  updateWinnersButtonVisibility();
+}
+
+async function sendRecruitmentReminder(){
+  const parts = await apiGet('getParticipants', {pollaId: currentPolla.id}).catch(()=>[]);
+  const n = parts.length;
+  if(n === 0){ alert('Todavía no hay nadie inscrito en esta Polla.'); return; }
+  const link = `${siteUrl()}?polla=${currentPolla.id}`;
+  const plural = n === 1 ? 'inscrito' : 'inscritos';
+  const text = `⚽ ¡Ya somos ${n} ${plural} en la Polla "TICO" # ${currentPolla.number}! 🏆\n\n¿Qué esperas para inscribirte tú también? 👉 ${link}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+
+function sendTimeReminder(){
+  if(!currentPolla || !currentPolla.startDate){
+    alert('Esta Polla no tiene configurada una fecha y hora de inicio.');
+    return;
+  }
+  const sl = startLabel(currentPolla.startDate);
+  const link = `${siteUrl()}?polla=${currentPolla.id}`;
+  const text = `⚽ ¡Atención! Nuestras inscripciones para la Polla "TICO" # ${currentPolla.number} están a punto de cerrar. 🏆\n\n⏰ ${sl.text}\n\n¡Ingresa tu pronóstico a tiempo aquí! 👉 ${link}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+
+// 📢 Recordatorio POR JORNADA (no por partido individual, y sin listar
+// nombres de quién falta — eso ahora es información privada del admin, ver
+// getMissingForMatch_/showResults, no algo que se manda por WhatsApp a todo
+// el grupo). Mensaje genérico: cuántos partidos tiene la jornada y que no
+// se olviden de enviar sus pronósticos antes de que cierren.
+async function sendJornadaReminder(groupKey){
+  const groupMatches = matches.filter(m => dateGroupKey(m.closeAt) === groupKey && !m.isCanceled && !m.resultSubmitted && !isClosed(m.closeAt));
+  if(groupMatches.length === 0){ alert('Esta jornada ya no tiene partidos abiertos para recordar.'); return; }
+  const n = groupMatches.length;
+  const dayLabel = fmtDayHeader(groupMatches[0].closeAt);
+  const plural = n === 1 ? 'partido' : 'partidos';
+  const link = `${siteUrl()}?polla=${currentPolla.id}`;
+  const text = `⚽ ¡Atención! Para la jornada del ${dayLabel} tenemos ${n} ${plural} 🏆\n\n📝 No olvides enviar tus pronósticos respectivos antes de que cierren.\n\n👉 ${link}`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+
+// 👀 Solo para uso INTERNO del admin (dentro de la tablita de "Ver pronósticos"
+// de un partido, ver showResults): compara participantes inscritos vs quién ya
+// envió pronóstico para ESE partido y devuelve los nombres de quién falta. Ya
+// no se usa para armar ningún mensaje de WhatsApp — el recordatorio que se
+// manda a los participantes ahora es genérico y por jornada (sendJornadaReminder).
+async function getMissingForMatch_(matchId){
+  let parts;
+  try { parts = await getParticipantsCached_(); }
+  catch(e){ return null; }
+  if(!Array.isArray(parts)) return null;
+  const preds = adminPredictionsCache[matchId] || [];
+  const predictedNames = new Set(preds.map(p => normalizeName(p.name)));
+  return parts.filter(p => !predictedNames.has(normalizeName(p.name))).map(p => p.name);
+}
+
+function renderPozo(){
+  const box = document.getElementById('pozoBox');
+  if(!box) return;
+  const totalParticipantes = Array.isArray(participantsCache) && participantsCache.length ? participantsCache.length : (Number.isFinite(Number(currentPolla?.participantCount)) ? Number(currentPolla.participantCount) : 0);
+  const recaudado = totalParticipantes * PRECIO_POR_PERSONA;
+  const pozo = recaudado * PORCENTAJE_POZO;
+  box.innerHTML = `
+    <b>💰 Pozo de premios</b>
+    ${totalParticipantes} participante(s) × S/${PRECIO_POR_PERSONA} = S/${recaudado.toFixed(2)} recaudado
+    <br>Pozo (${(PORCENTAJE_POZO * 100).toFixed(1)}%) = <b>S/${pozo.toFixed(2)}</b>
+  `;
+  renderFreeContestBox(); // no se espera: se llena solo cuando responda el servidor
+}
+
+// 🎁 Debajo del pozo de premios: cuántos están clasificados HOY al Concurso
+// Gratuita de cierre de temporada (Top ~60% de la tabla acumulada del año, global,
+// no depende de la Polla que se esté viendo en este momento).
+async function renderFreeContestBox(){
+  const box = document.getElementById('freeContestBox');
+  if(!box) return;
+  box.innerHTML = '<b>🎁 Polla Gratuita de cierre de temporada</b>Cargando...';
+  const stats = await apiGet('getFreeContestStats').catch(()=>null);
+  if(!stats || typeof stats.qualifiedCount !== 'number'){
+    box.innerHTML = '<b>🎁 Polla Gratuita de cierre de temporada</b>No se pudo cargar en este momento.';
+    return;
+  }
+  box.innerHTML = `
+    <b>🎁 Polla Gratuita de cierre de temporada</b>
+    ${stats.qualifiedCount} de ${stats.totalParticipants} participante(s) de la tabla acumulada están clasificados hoy (Top ~${(FREE_CONTEST_TOP_PERCENT_UI * 100).toFixed(0)}%).
+  `;
+}
+
+// 📲 Arma la lista de nombres clasificados y abre WhatsApp con la invitación
+// lista para enviar. Como la app no guarda el número de celular de cada
+// participante, se abre sin destinatario fijo (igual que "Compartir esta
+// Polla") para que el admin la reenvíe puntualmente a cada clasificado o a
+// un grupo/lista de difusión armada solo con ellos.
+async function inviteFreeContestQualifiers(){
+  const stats = await apiGet('getFreeContestStats').catch(()=>null);
+  if(!stats || !stats.qualifiedNames || stats.qualifiedNames.length === 0){
+    alert('Todavía no hay participantes clasificados para invitar.');
+    return;
+  }
+  const link = siteUrl();
+  const text = `🎁 ¡Felicidades! Por tu desempeño en la Tabla Acumulada de TICO, clasificaste a la Polla Gratuita de cierre de temporada 🏆\n\n¿Listo para participar? Ingresa aquí 👉 ${link}`;
+  if(!confirm(`Se abrirá WhatsApp con la invitación para los ${stats.qualifiedNames.length} clasificados. Como el sistema no guarda su número de celular, tendrás que elegir a quién enviársela (uno por uno o a un grupo/lista de difusión con ellos). ¿Continuar?`)) return;
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+
+// 🏁 Cuadro de estado de temporada, dentro del panel "Administrar Pollas".
+// Muestra cuántos hay clasificados HOY (los que la app usa ahora mismo para
+// dejar entrar gente a una Polla marcada como gratuita) y, si ya se cerró
+// alguna temporada antes, un resumen de esa última.
+async function renderSeasonInfoBox(){
+  const box = document.getElementById('seasonInfoBox');
+  if(!box) return;
+  box.innerHTML = 'Cargando...';
+  const info = await apiGetSilent('getSeasonInfo').catch(()=>null);
+  if(!info){ box.innerHTML = 'No se pudo cargar el estado de la temporada.'; return; }
+  let html = `<b>🎁 Clasificados hoy a la Polla gratuita:</b> ${info.liveQualifiedCount} de ${info.liveTotalParticipants} (según la tabla acumulada del año en este momento; se actualiza sola, no depende de cerrar temporada).`;
+  if(info.lastClosedSeason){
+    html += `<br><br><b>Última temporada cerrada:</b> ${escapeHtml(info.lastClosedSeason.seasonLabel)} · ${info.lastClosedSeason.qualifiedCount} de ${info.lastClosedSeason.totalParticipants} clasificaron · cerrada por ${escapeHtml(info.lastClosedSeason.closedBy)} el ${fmtDate(info.lastClosedSeason.closedAt)}`;
+  } else {
+    html += '<br><br>Todavía no se ha cerrado ninguna temporada.';
+  }
+  box.innerHTML = html;
+}
+
+// 🏁 Cierra la temporada actual: archiva la tabla acumulada final y quiénes
+// clasificaron, congela esa lista de clasificados (para las Pollas
+// gratuitas) y deja la tabla del año en 0 para la próxima temporada. Es una
+// acción manual, se puede aplicar cuando el admin quiera, y no tiene un
+// botón de "deshacer" fácil, así que pide doble confirmación.
+async function closeSeason(){
+  const label = prompt('¿Cómo se llama la temporada que estás cerrando? (ej. "2026")', new Date().getFullYear().toString());
+  if(label === null) return;
+  const sure = confirm(`⚠️ Esto va a:\n\n1) Guardar (archivar) la tabla acumulada del año TAL COMO ESTÁ ahora mismo, con quiénes clasificaron.\n2) Reiniciar la tabla acumulada del año a 0 para la próxima temporada.\n\nOJO: si todavía tienes una Polla gratuita en curso, ciérrala o termínala ANTES de esto. Una vez que reinicias la tabla, ya no reflejará quién iba clasificando en el año que se archivó.\n\nNo se borra ningún historial de Pollas ni pronósticos viejos, pero esta acción no se puede deshacer fácilmente. ¿Seguro que quieres cerrar la temporada "${label}"?`);
+  if(!sure) return;
+  const result = await withSensitiveAdminConfirmation_('closeSeason','Confirma tu clave para cerrar la temporada.', ()=>apiPost({action:'closeSeason', seasonLabel: label, pin: adminPin, adminName: adminName}));
+  if(!result) return;
+  if(!result.ok){ alert(result.error || 'No se pudo cerrar la temporada.'); return; }
+  alert(`✅ Temporada "${result.seasonLabel}" cerrada.\n\n${result.qualifiedCount} de ${result.totalParticipants} quedaron clasificados y archivados.\nLa tabla acumulada del año ya está en 0 para la nueva temporada.`);
+  renderSeasonInfoBox();
+}
+
+// 🧹 Limpia únicamente las Pollas finalizadas que pertenecen a la última
+// temporada cerrada. No toca la nueva temporada, la auditoría, Ganadores ni
+// el snapshot histórico de Temporadas.
+async function clearSeasonData(){
+  const sure1 = confirm('🧹 Limpiar última temporada cerrada\n\nEsta limpieza segura NO borra las Pollas protegidas ni sus históricos.\n\nSolo elimina residuos operativos que hayan quedado después de compactar (partidos, pronósticos, participaciones o referidos).\n\nSe conservan:\n• Jugadores y sus accesos\n• Ganadores / Salón de la Fama\n• Temporadas cerradas y sus tablas finales\n• Pollas compactadas como cabeceras históricas\n• Snapshots, respaldos y auditoría\n\n¿Continuar?');
+  if(!sure1) return;
+  const sure2 = confirm('Última confirmación: se limpiarán únicamente residuos de la última temporada cerrada y protegida.\n\n¿Continuar ahora?');
+  if(!sure2) return;
+  const result = await withSensitiveAdminConfirmation_('clearSeasonData','Confirma tu clave para limpiar de forma segura la última temporada cerrada.', ()=>apiPost({action:'clearSeasonData', pin: adminPin, adminName: adminName}));
+  if(!result) return;
+  if(!result.ok){ alert(result.error || 'No se pudo limpiar la temporada.'); return; }
+  alert(`✅ Limpieza segura completada.\n\nPollas protegidas conservadas: ${result.pollasProtected || 0}\nPartidos residuales borrados: ${result.matchesDeleted || 0}\nPronósticos residuales borrados: ${result.predictionsDeleted || 0}\nParticipaciones residuales borradas: ${result.participantsDeleted || 0}\nReferidos residuales borrados: ${result.referralsDeleted || 0}\n\nJugadores, Ganadores, Temporadas, respaldos y los históricos compactados permanecen intactos.`);
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+  allPollasLoadedAt_ = Date.now();
+  allPollasScope_ = 'admin';
+  renderPollasAdminList();
+  renderLanding();
+  renderSeasonInfoBox();
+}
+async function renderParticipantsList(){
+  const loaded = await apiPost({action:'getParticipantsAdmin', pollaId:currentPolla.id, pin:adminPin, adminName:adminName}).catch(()=>null);
+  const list=document.getElementById('participantsList');
+  if(!Array.isArray(loaded)){ list.innerHTML='<p class="hint">⚠️ No se pudo cargar la lista de participantes. Reintenta.</p>'; return; }
+  participantsCache = loaded;
+  participantsCachePollaId = currentPolla.id;
+  participantsCacheAt = Date.now();
+  renderPozo();
+  renderAdminOverview_();
+  if(participantsCache.length===0){list.innerHTML='<p class="hint">Sin participantes todavía.</p>';return;}
+  list.innerHTML=participantsCache.map(p=>`
+    <div class="list-item">
+      <div class="top-row">
+        <div class="info">
+          ${escapeHtml(p.name)}
+          <span class="ref-tag">${p.activationStatus==='ACTIVE'?'🟢 Activo':'🟡 Pendiente de activación'}</span>
+          <button class="pay-badge ${p.paid?'paid':'pending'}" onclick="toggleParticipantPaid('${jsAttr(p.name)}',${p.paid},this)">${p.paid?'✅ Pagó':'⏳ Pendiente'}</button>
+          ${p.referredCount>0?`<span class="ref-tag">👥 invitó a ${p.referredCount}</span>`:''}
+        </div>
+        ${sportsLocked_()?'':`<div class="btn-row">
+          ${p.whatsapp?`<button class="icon-btn" title="Contactar por WhatsApp" onclick="openParticipantWhatsapp('${jsAttr(p.name)}','${jsAttr(p.whatsapp)}')">📱</button>`:''}
+          ${p.activationStatus!=='ACTIVE'?`<button class="icon-btn" title="Regenerar código" onclick="regenerateActivation('${jsAttr(p.name)}')">🔄</button>`:''}
+          <button class="icon-btn" title="Restablecer PIN" onclick="resetParticipantPin('${jsAttr(p.name)}')">🔑</button>
+          <button class="icon-btn" title="Gestionar identidad" onclick="openIdentityManager('${jsAttr(p.name)}')">🪪</button>
+          <button class="icon-btn" title="Eliminar de esta Polla" onclick="deleteParticipant('${jsAttr(p.name)}')">🗑️</button>
+        </div>`}
+      </div>
+    </div>`).join('');
+}
+async function toggleParticipantPaid(name, currentlyPaid, btn=null){
+  if(btn) btn.disabled=true;
+  try{
+    const result=await apiPost({action:'setParticipantPaid',pollaId:currentPolla.id,name,paid:(!currentlyPaid).toString(),pin:adminPin,adminName:adminName});
+    if(!result.ok){alert(humanError_(result.error,'No se pudo actualizar el pago.'));return;}
+    await renderParticipantsList();
+  } finally {
+    if(btn && document.body.contains(btn)) btn.disabled=false;
+  }
+}
+function openParticipantWhatsapp(name, whatsapp){
+  const phone=String(whatsapp||'').replace(/\D/g,'');
+  if(!phone){ alert('Este participante no registró WhatsApp.'); return; }
+  const text=`Hola ${name} 👋 Te escribe Manolo de LaPollaTICO.`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`,'_blank');
+}
+function activationMessage(name,code){
+  return `Hola ${name} 👋\nManolo ya te agregó a la Polla TICO #${currentPolla?.number||''}.\n\nTu código de activación es: ${code}\n\nEntra a la app, escribe tu nombre, coloca este código y crea tu PIN de 4 dígitos.`;
+}
+async function copyTextSafe(text){ try{await navigator.clipboard.writeText(text);return true;}catch(_){return false;} }
+function showActivationCodes(codes){
+  lastActivationCodes=Array.isArray(codes)?codes:[];
+  const box=document.getElementById('activationCodesList');
+  box.innerHTML=lastActivationCodes.length?lastActivationCodes.map((x,i)=>`<div class="list-item"><b>${escapeHtml(x.name)}</b><small style="display:block;margin:5px 0;">${escapeHtml(x.code)}</small><div class="btn-row"><button class="btn-secondary" onclick="copyActivationCode(${i})">📋 Copiar código</button><button class="btn-secondary" onclick="copyActivationMessage(${i})">📨 Copiar mensaje</button></div></div>`).join(''):'<p class="hint">No se generaron códigos nuevos porque los participantes agregados ya tenían una cuenta activa.</p>';
+  openOverlay('activationCodesOverlay');
+}
+async function copyActivationCode(i){const x=lastActivationCodes[i];if(x){await copyTextSafe(x.code);alert('✅ Código copiado.');}}
+async function copyActivationMessage(i){const x=lastActivationCodes[i];if(x){await copyTextSafe(activationMessage(x.name,x.code));alert('✅ Mensaje copiado.');}}
+async function copyAllActivationMessages(){if(!lastActivationCodes.length)return;await copyTextSafe(lastActivationCodes.map(x=>activationMessage(x.name,x.code)).join('\n\n──────────\n\n'));alert('✅ Mensajes copiados.');}
+
+async function resetParticipantPin(name){
+  if(!confirm(`¿Restablecer el PIN de ${name}?\n\nSu PIN actual dejará de funcionar. Sus puntos, pronósticos, participaciones y referidos se conservan.`))return;
+  const result=await apiPost({action:'resetPin',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo restablecer.');return;}
+  showActivationCodes([{name,code:result.activationCode}]);
+  await renderParticipantsList();
+}
+async function regenerateActivation(name){
+  const result=await apiPost({action:'regenerateActivationCode',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo regenerar.');return;} showActivationCodes([{name,code:result.activationCode}]);
+}
+let historicalPlayersCache_=[];
+let historicalPlayerSelected_=null;
+async function openHistoricalPlayersManager_(){
+  openOverlay('historicalPlayersOverlay');
+  const list=document.getElementById('historicalPlayersList');
+  list.innerHTML='<p class="hint">Cargando...</p>';
+  const r=await apiPost({action:'getHistoricalPlayersAdmin',pin:adminPin,adminName:adminName});
+  if(!r?.ok){list.innerHTML='<p class="hint">No se pudo cargar la lista.</p>';return;}
+  historicalPlayersCache_=Array.isArray(r.players)?r.players:[];
+  document.getElementById('historicalPlayerSearch').value='';
+  renderHistoricalPlayers_();
+}
+function renderHistoricalPlayers_(){
+  const box=document.getElementById('historicalPlayersList'); if(!box)return;
+  const q=normalizeName(document.getElementById('historicalPlayerSearch')?.value||'');
+  const rows=historicalPlayersCache_.filter(p=>!q||normalizeName(p.name).includes(q)).slice(0,100);
+  box.innerHTML=rows.length?rows.map(p=>`<div class="list-item" style="display:flex;align-items:center;justify-content:space-between;gap:12px;"><div><b>${escapeHtml(p.name)}</b><small style="display:block;">Identidad global</small></div><button class="manage-history-btn" title="Gestionar jugador" onclick="openHistoricalPlayerDetail_('${jsAttr(p.id)}')">Gestionar</button></div>`).join(''):'<p class="hint">No hay coincidencias.</p>';
+}
+async function openHistoricalPlayerDetail_(playerId){
+  const body=document.getElementById('historicalPlayerDetailBody');
+  body.innerHTML='<p class="hint">Revisando historial...</p>'; openOverlay('historicalPlayerDetailOverlay');
+  const r=await apiPost({action:'previewHistoricalPlayerDeletion',playerId,pin:adminPin,adminName:adminName});
+  if(!r?.ok){body.innerHTML=`<p class="hint">${escapeHtml(r?.error||'No se pudo revisar.')}</p>`;return;}
+  historicalPlayerSelected_=r;
+  document.getElementById('historicalPlayerDetailTitle').textContent=r.player?.name||'Jugador';
+  const t=r.totals||{}; const active=Array.isArray(r.activePollas)?r.activePollas:[];
+  body.innerHTML=`<b>Resumen antes de borrar</b><br><span class="hint">${Number(t.participations||0)} participaciones · ${Number(t.predictions||0)} pronósticos<br>${Number(t.points||0)} pts acumulados · ${Number(t.matches||0)} PJ · ${Number(t.exacts||0)} exactos · ${Number(t.mvps||0)} MVP<br>${Number(t.titles||0)} título(s) · ${Number(t.compactedPollas||0)} Polla(s) compactada(s) · ${Number(t.seasons||0)} temporada(s)</span>${active.length?`<p style="margin:10px 0 0;"><b>⚠️ Bloqueado:</b> todavía participa en ${active.map(p=>'Polla #'+escapeHtml(p.number)).join(', ')}. Retíralo primero de esas Pollas.</p>`:'<p style="margin:10px 0 0;">Puede gestionarse históricamente.</p>'}<p class="hint" style="margin-top:8px;">Los ZIP sellados previos no se modifican; siguen siendo la copia de auditoría original.</p>`;
+  document.getElementById('historicalAnonBtn').disabled=!r.canDelete;
+  document.getElementById('historicalEraseBtn').disabled=!r.canDelete;
+}
+async function deleteHistoricalPlayer_(mode){
+  const r=historicalPlayerSelected_; if(!r?.player?.id||!r.canDelete)return;
+  const name=r.player.name;
+  const total=mode==='erase_visible';
+  const msg=total
+    ? `⚠️ ELIMINACIÓN HISTÓRICA\n\nSe eliminará la identidad de ${name}, su acceso, PIN y recuperación. También dejará de aparecer en Tabla del año y Ganadores.\n\nSus registros deportivos históricos quedarán anonimizados para NO recalcular campeones.\n\n¿Continuar?`
+    : `¿Eliminar la cuenta de ${name} y anonimizar su historial?\n\nSus puntos y títulos se conservan, pero aparecerán como “Jugador eliminado”.`;
+  if(!confirm(msg))return;
+  const result=await withSensitiveAdminConfirmation_('deleteHistoricalPlayer',`Confirma tu clave para eliminar históricamente a ${name}.`,()=>apiPost({action:'deleteHistoricalPlayer',playerId:r.player.id,mode,pin:adminPin,adminName:adminName}));
+  if(!result)return;
+  if(!result.ok){alert(result.error||'No se pudo completar la eliminación histórica.');return;}
+  invalidateStandingsCaches_(); invalidateParticipantsCache_();
+  historicalPlayersCache_=historicalPlayersCache_.filter(p=>p.id!==r.player.id); historicalPlayerSelected_=null;
+  closeOverlay('historicalPlayerDetailOverlay'); renderHistoricalPlayers_();
+  alert(total?'✅ Identidad eliminada. También se retiraron sus méritos globales; los resultados históricos quedaron anonimizados sin recalcular campeones.':'✅ Cuenta eliminada e historial anonimizado.');
+}
+
+async function addParticipants(){
+  const raw=document.getElementById('participantsInput').value;
+  const names=raw.split('\n').map(n=>n.trim()).filter(Boolean);
+  if(!names.length){alert('Escribe al menos un nombre.');return;}
+  if(enrollmentClosedLocally_() && !confirm('⚠️ Las inscripciones normales ya cerraron.\n\nComo Admin sí puedes agregar participantes excepcionalmente. Los partidos que ya cerraron no podrán pronosticarse.\n\n¿Continuar?'))return;
+  const result=await apiPost({action:'addParticipants',pollaId:currentPolla.id,names:JSON.stringify(names),pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudieron agregar.');return;}
+  invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null;
+  document.getElementById('participantsInput').value=''; await renderParticipantsList();
+  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla;
+  renderAdminMatchList();
+  if(result.activationCodes?.length) showActivationCodes(result.activationCodes); else alert(`${result.added} participante(s) agregados.`);
+}
+async function deleteParticipant(name){
+  const preview=await apiPost({action:'previewParticipantDeletion',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName});
+  if(!preview.ok){alert(preview.error||'No se pudo comprobar qué datos se eliminarían.');return;}
+  const detail=preview.willDeleteGlobally
+    ? `⚠️ ${name} no tiene otro historial real en TICO.\n\nSe eliminarán:\n• su participación y pronósticos de ESTA Polla\n• su cuenta global\n• su PIN y recuperación\n• cualquier activación pendiente\n\nEl nombre “${name}” volverá a quedar disponible.`
+    : `Se eliminarán la participación y los pronósticos de ${name} en ESTA Polla.\n\n✅ Su cuenta, PIN e historial anterior se conservarán porque ya es un jugador consolidado.`;
+  if(!confirm(`¿Eliminar a ${name}?\n\n${detail}\n\n¿Continuar?`))return;
+  const result=await withSensitiveAdminConfirmation_('deleteParticipantFull',`Confirma tu clave para eliminar a ${name} de la Polla.`,()=>apiPost({action:'deleteParticipantFull',pollaId:currentPolla.id,name,pin:adminPin,adminName:adminName}));
+  if(!result) return;
+  if(!result.ok){alert(result.error||'No se pudo eliminar.');return;}
+  invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null; invalidateStandingsCaches_();
+  alert(result.deletedGlobally?`✅ ${name} fue eliminado de la Polla y también se eliminó su cuenta global.`:`✅ ${name} fue eliminado de esta Polla. Su cuenta e historial se conservaron.`);
+  await renderParticipantsList(); allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla; await loadMatches(); renderAdminMatchList();
+}
+function openIdentityManager(name){ pendingIdentityName=name; document.getElementById('identityCurrentLabel').textContent=`Jugador actual: ${name}`; openOverlay('identityAdminOverlay'); }
+async function startGlobalRename(){
+  const oldName=pendingIdentityName; const newName=prompt(`Nuevo nombre global para ${oldName}:`,oldName); if(!newName||newName.trim()===oldName)return;
+  if(!confirm(`Esto cambiará el nombre de ${oldName} a ${newName.trim()} en todo TICO, manteniendo su identidad, PIN, acumulada e históricos. ¿Confirmar?`))return;
+  const result=await apiPost({action:'renameParticipant',pollaId:currentPolla.id,oldName,newName:newName.trim(),pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo corregir el nombre.');return;} closeOverlay('identityAdminOverlay'); await renderParticipantsList(); alert('✅ Nombre global actualizado.');
+}
+async function startIdentitySplit(){
+  const oldName=pendingIdentityName; const newName=prompt(`Nueva identidad desde ESTA Polla para ${oldName}:`,''); if(!newName||!newName.trim())return;
+  if(!confirm(`⚠️ Separar identidad\n\nLos pronósticos y puntos obtenidos por ${oldName} en ESTA Polla pasarán a ${newName.trim()}.\nLas Pollas e históricos anteriores seguirán en ${oldName}.\n${newName.trim()} tendrá un PIN independiente.\n\n¿Confirmar?`))return;
+  const result=await apiPost({action:'splitParticipantIdentity',pollaId:currentPolla.id,oldName,newName:newName.trim(),pin:adminPin,adminName:adminName});
+  if(!result.ok){alert(result.error||'No se pudo separar.');return;} closeOverlay('identityAdminOverlay'); await renderParticipantsList(); showActivationCodes([{name:result.newName,code:result.activationCode}]);
+}
+
+async function addMatch(){
+  const matchNumber = document.getElementById('newMatchNumber').value.trim();
+  const home = document.getElementById('newHome').value.trim();
+  const away = document.getElementById('newAway').value.trim();
+  const file = document.getElementById('newImage').files[0];
+  const close = document.getElementById('newClose').value;
+  const isStar = document.getElementById('newIsStar').checked;
+  if(!matchNumber || !home || !away || !file || !close){ alert('Completa número, equipos, foto y hora de cierre.'); return; }
+
+  const btn = document.getElementById('addMatchBtn');
+  btn.disabled = true; btn.textContent = 'Subiendo...';
+  try{
+    const base64 = await compressImage(file);
+    const result = await apiPost({
+      action:'addMatch', pollaId: currentPolla.id, matchNumber, home, away,
+      closeAt: peruInputToISOString_(close), imageBase64: base64, imageMime:'image/jpeg', isStarMatch: isStar.toString(),
+      pin: adminPin, adminName: adminName
+    });
+    if(!result.ok){ alert(result.error || 'No se pudo agregar.'); }
+    else{
+      const closeDate = new Date(close);
+      const msg = `⚽ Nuevo partido${isStar?' ⭐ ESTRELLA':''}: ${home} vs ${away}\nCierra a las ${closeDate.toLocaleTimeString('es-PE',{hour:'numeric',minute:'2-digit'})}\nEnvía tu pronóstico aquí 👉 ${siteUrl()}?polla=${currentPolla.id}`;
+      try{ await navigator.clipboard.writeText(msg); alert('✅ Partido agregado.\n\n📋 Mensaje copiado para WhatsApp:\n\n' + msg); }
+      catch(err){ alert('✅ Partido agregado.\n\nMensaje para WhatsApp:\n\n' + msg); }
+      clearNewMatchForm();
+      await loadMatches();
+      renderAdminMatchList();
+      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+    }
+  } finally { btn.disabled = false; btn.textContent = 'Agregar partido'; }
+}
+
+function toggleAdminDateGroup(key){ if(collapsedAdminGroups.has(key))collapsedAdminGroups.delete(key);else collapsedAdminGroups.add(key);renderAdminMatchList(false); }
+function expandAllAdminGroups(){collapsedAdminGroups.clear();renderAdminMatchList(false);}
+function collapseAllAdminGroups(){matches.forEach(m=>collapsedAdminGroups.add(dateGroupKey(m.closeAt)));renderAdminMatchList(false);}
+
+async function renderAdminMatchList(refreshPredictions=true){
+  const list = document.getElementById('adminMatchList');
+  if(matches.length === 0){ list.innerHTML = '<p class="hint">Sin partidos todavía.</p>'; return; }
+  const sortedMatches = getSortedMatches();
+
+  // 📅 Igual que en la vista de los participantes: los partidos del admin también
+  // se agrupan por fecha, con un botón de recordatorio POR JORNADA en la cabecera
+  // de cada grupo (ver sendJornadaReminder), en vez del botón que había antes en
+  // cada partido individual con la lista de nombres de quién faltaba.
+  const groups = [];
+  const groupIndexByKey = {};
+  sortedMatches.forEach(m => {
+    const key = dateGroupKey(m.closeAt);
+    if(!(key in groupIndexByKey)){
+      groupIndexByKey[key] = groups.length;
+      groups.push({key, sampleIso: m.closeAt, matches: []});
+    }
+    groups[groupIndexByKey[key]].matches.push(m);
+  });
+
+  list.innerHTML = groups.map(group => {
+    const needed = group.matches.filter(m => !m.isCanceled);
+    const itemsHtml = group.matches.map(m => `
+    <div class="list-item" id="admitem-${m.id}">
+      <div class="top-row">
+        <div class="info">
+          ${m.imageUrl ? `<img src="${m.imageUrl}" loading="lazy" decoding="async" style="width:40px;height:40px;object-fit:cover;border-radius:8px;">` : ''}
+          <span>Partido ${escapeHtml(m.matchNumber)}: ${escapeHtml(m.home)} vs ${escapeHtml(m.away)} ${m.isCanceled ? '<span class="result-tag canceled">CANCELADO</span>' : (m.isStarMatch?'<span class="star-tag">⭐ ESTRELLA</span>':'')}<small>cierra ${fmtCloseTime(m.closeAt)}</small></span>
+        </div>
+        <div class="btn-row">
+          ${(!sportsLocked_() && !m.isCanceled && !m.resultSubmitted) ? `<button class="icon-btn" title="Cancelar y Reemplazar" onclick="openCancelModal('${m.id}')">🚫</button>` : ''}
+          ${sportsLocked_() ? '' : `<button class="icon-btn" title="Editar" onclick="toggleEditMatch('${m.id}')">✏️</button>`}
+          <button class="icon-btn" title="Ver pronósticos" onclick="showResults('${m.id}', true)">📋</button>
+          <button class="icon-btn" title="Exportar" onclick="exportMatchCSV('${m.id}', true)">⬇️</button>
+          ${sportsLocked_() ? '' : `<button class="icon-btn" title="Eliminar" onclick="deleteMatchAdmin('${m.id}')">🗑️</button>`}
+        </div>
+      </div>
+      <div class="admin-summary" id="summary-${m.id}">Cargando participación...</div>
+      ${sportsLocked_() ? '' : `
+      <div class="edit-match-box" id="editbox-${m.id}">
+        <label>Número de partido</label><input id="edit-num-${m.id}" type="text" value="${escapeHtml(m.matchNumber)}">
+        <div class="row2">
+          <div><label>Equipo local</label><input id="edit-home-${m.id}" type="text" value="${escapeHtml(m.home)}"></div>
+          <div><label>Equipo visitante</label><input id="edit-away-${m.id}" type="text" value="${escapeHtml(m.away)}"></div>
+        </div>
+        <label>Cierra pronósticos el</label><input id="edit-close-${m.id}" type="datetime-local" value="${toLocalInputValue(m.closeAt)}">
+        <label>Reemplazar foto (opcional)</label><input id="edit-image-${m.id}" type="file" accept="image/*">
+        <div class="checkbox-row"><input id="edit-star-${m.id}" type="checkbox" ${m.isStarMatch?'checked':''}><label for="edit-star-${m.id}" style="margin:0;">⭐ Partido estrella</label></div>
+        <button class="btn-secondary" onclick="saveMatchEdit('${m.id}')">Guardar cambios</button>
+      </div>`}
+      <div style="margin-top:10px;">
+        ${m.isCanceled
+          ? `<span class="result-tag canceled">Partido Cancelado (${escapeHtml(m.cancelReason || 'Fuerza mayor')})</span>`
+          : (m.resultSubmitted
+            ? `<span class="result-tag done">Resultado: ${m.actualHome}-${m.actualAway} ✓</span>
+               ${sportsLocked_() ? '' : `
+               <div class="result-row"><input type="number" min="0" id="rh-${m.id}" value="${m.actualHome}"><span>-</span><input type="number" min="0" id="ra-${m.id}" value="${m.actualAway}">
+               <button class="icon-btn" title="Corregir resultado" onclick="submitResult('${m.id}')">✏️ Corregir</button></div>`}`
+            : `<span class="result-tag pending">Sin resultado</span>
+               ${sportsLocked_() ? '' : `
+               <div class="result-row"><input type="number" min="0" id="rh-${m.id}" placeholder="${escapeHtml(m.home)}"><span>-</span><input type="number" min="0" id="ra-${m.id}" placeholder="${escapeHtml(m.away)}">
+               <button class="icon-btn" title="Subir resultado" onclick="submitResult('${m.id}')">✅ Subir</button></div>`}`
+          )
+        }
+      </div>
+    </div>`).join('');
+
+    const canRemind = !sportsLocked_() && needed.some(m => !m.resultSubmitted && !isClosed(m.closeAt));
+    return `
+      <div class="date-group">
+        <div class="date-group-header" onclick="toggleAdminDateGroup('${group.key}')">
+          <span class="date-group-label">${collapsedAdminGroups.has(group.key)?'▶':'▼'} ${fmtDayHeader(group.sampleIso)}</span>
+          <span class="date-group-pill">${needed.length} PARTIDO${needed.length===1?'':'S'} · ${group.matches.filter(m=>m.resultSubmitted||m.isCanceled).length} LISTOS${group.matches.some(m=>!m.resultSubmitted&&!m.isCanceled)?' · 🟡 PENDIENTES':' · ✅ COMPLETA'}</span>
+          ${canRemind ? `<button class="icon-btn" title="Mandar recordatorio de esta jornada" onclick="event.stopPropagation();sendJornadaReminder('${group.key}')">📢</button>` : ''}
+        </div>
+        <div class="date-group-body ${collapsedAdminGroups.has(group.key)?'hidden':''}">${itemsHtml}</div>
+      </div>`;
+  }).join('');
+
+  const totalParticipants = Number.isFinite(Number(currentPolla?.participantCount)) ? Number(currentPolla.participantCount) : (Array.isArray(participantsCache) ? participantsCache.length : 0);
+  // OPT V14: al abrir el Admin solo descargamos CONTEOS por partido.
+  // Los scores individuales se solicitan recién al tocar 📋.
+  const adminDataOk = refreshPredictions ? await refreshAdminPredictionSummary_(true) : true;
+  sortedMatches.forEach(m => {
+    const sent = Number(adminPredictionSummaryCache[m.id] || 0);
+    const el = document.getElementById('summary-'+m.id);
+    if(!el) return;
+    if(m.isCanceled) el.textContent = `🚫 Cancelado por: ${m.cancelReason || 'Fuerza mayor'}`;
+    else if(!adminDataOk) el.textContent = '⚠️ No se pudo verificar la participación. Reintenta en unos segundos.';
+    else el.textContent = `📊 ${sent} de ${totalParticipants} participantes enviaron pronóstico`;
+  });
+}
+
+function openCancelModal(matchId){
+  const m = matches.find(x => x.id === matchId);
+  if(!m) return;
+  document.getElementById('cancelMatchTargetId').value = matchId;
+  document.getElementById('cancelReasonInput').value = 'Emergencia climatológica';
+  document.getElementById('reemplazoHome').value = '';
+  document.getElementById('reemplazoAway').value = '';
+  document.getElementById('reemplazoClose').value = toLocalInputValue(m.closeAt);
+  document.getElementById('reemplazoIsStar').checked = m.isStarMatch || false;
+  openOverlay('cancelMatchOverlay');
+}
+
+async function confirmCancelAndReplace(){
+  const matchId = document.getElementById('cancelMatchTargetId').value;
+  const cancelReason = document.getElementById('cancelReasonInput').value.trim();
+  const rHome = document.getElementById('reemplazoHome').value.trim();
+  const rAway = document.getElementById('reemplazoAway').value.trim();
+  const rFile = document.getElementById('reemplazoImage').files[0];
+  const rClose = document.getElementById('reemplazoClose').value;
+  const rIsStar = document.getElementById('reemplazoIsStar').checked;
+
+  if(!cancelReason){ alert('Escribe el motivo de la cancelación.'); return; }
+  if(!rHome || !rAway || !rFile || !rClose){ alert('Completa los datos del nuevo partido de reemplazo.'); return; }
+
+  const btn = document.getElementById('confirmCancelBtn');
+  btn.disabled = true; btn.textContent = 'Procesando reemplazo...';
+
+  try{
+    const base64 = await compressImage(rFile);
+    const oldMatch = matches.find(m => m.id === matchId);
+    const replacementMatchNumber = oldMatch ? oldMatch.matchNumber : '1';
+
+    const result = await apiPost({
+      action: 'cancelAndReplaceMatch',
+      pollaId: currentPolla.id,
+      cancelMatchId: matchId,
+      cancelReason,
+      newMatchNumber: replacementMatchNumber,
+      newHome: rHome,
+      newAway: rAway,
+      newCloseAt: peruInputToISOString_(rClose),
+      newImageBase64: base64,
+      newImageMime: 'image/jpeg',
+      newIsStar: rIsStar.toString(),
+      pin: adminPin, adminName: adminName
+    });
+
+    if(!result.ok){ alert(result.error || 'No se pudo reemplazar el partido.'); return; }
+
+    closeOverlay('cancelMatchOverlay');
+    alert(`✅ Partido cancelado correctamente.\nSe creó el partido de reemplazo (${rHome} vs ${rAway}).`);
+    await loadMatches();
+    renderAdminMatchList();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Confirmar Cancelación y Reemplazo';
+  }
+}
+
+function toggleEditMatch(matchId){ document.getElementById('editbox-'+matchId).classList.toggle('show'); }
+async function saveMatchEdit(matchId){
+  const matchNumber = document.getElementById(`edit-num-${matchId}`).value.trim();
+  const home = document.getElementById(`edit-home-${matchId}`).value.trim();
+  const away = document.getElementById(`edit-away-${matchId}`).value.trim();
+  const close = document.getElementById(`edit-close-${matchId}`).value;
+  const file = document.getElementById(`edit-image-${matchId}`).files[0];
+  const isStar = document.getElementById(`edit-star-${matchId}`).checked;
+  if(!matchNumber || !home || !away || !close){ alert('Completa todos los campos.'); return; }
+  const params = {action:'editMatch', id: matchId, matchNumber, home, away, closeAt: peruInputToISOString_(close), isStarMatch: isStar.toString(), pin: adminPin, adminName: adminName};
+  if(file){ params.imageBase64 = await compressImage(file); params.imageMime = 'image/jpeg'; }
+  const result = await apiPost(params);
+  if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
+  await loadMatches(true);
+  renderAdminMatchList();
+  alert('✅ Partido actualizado.');
+}
+async function submitResult(matchId){
+  const home = document.getElementById(`rh-${matchId}`).value;
+  const away = document.getElementById(`ra-${matchId}`).value;
+  if(home === '' || away === ''){ alert('Ingresa el marcador final.'); return; }
+  if(!confirm(`¿Confirmar resultado ${home}-${away}? Se recalculan los puntos de todos.`)) return;
+  const result = await apiPost({action:'submitResult', id: matchId, actualHome: home, actualAway: away, pin: adminPin, adminName: adminName});
+  if(!result.ok){ alert(result.error || 'No se pudo guardar el resultado.'); return; }
+  delete predictionsCache[matchId];
+  delete adminPredictionsCache[matchId];
+  invalidateStandingsCaches_();
+  await loadMatches(true);
+  renderAdminMatchList();
+}
+async function deleteMatchAdmin(id){
+  if(!confirm('¿Eliminar este partido y sus pronósticos?')) return;
+  await withSensitiveAdminConfirmation_('deleteMatch','Confirma tu clave para eliminar este partido.', async()=>{
+    let result = await apiPost({action:'deleteMatch', id, pin: adminPin, adminName: adminName});
+    if(!result.ok && result.requiresStrongConfirmation){
+      if(!confirm(`${result.error}\n\n¿Borrar de todas formas?`)) return;
+      result = await apiPost({action:'deleteMatch',id,forceDeleteWithPredictions:'true',pin:adminPin,adminName:adminName});
+    }
+    if(!result.ok){ alert(result.error || 'No se pudo eliminar el partido.'); return; }
+    delete predictionsCache[id];
+    delete adminPredictionsCache[id];
+    adminPredictionSummaryPollaId = null;
+    invalidateStandingsCaches_();
+    await loadMatches();
+    renderAdminMatchList();
+    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  });
+}
+async function savePremios(){
+  const premio1 = document.getElementById('premio1Input').value.trim();
+  const premio2 = document.getElementById('premio2Input').value.trim();
+  const premio3 = document.getElementById('premio3Input').value.trim();
+  const result=await apiPost({action:'editPolla', id: currentPolla.id, premio1, premio2, premio3, pin: adminPin, adminName: adminName});
+  if(!result.ok){alert(result.error||'No se pudieron guardar los premios.');return;}
+  currentPolla.premio1 = premio1; currentPolla.premio2 = premio2; currentPolla.premio3 = premio3;
+  alert('Premios guardados.');
+}
+// ✏️ Mini-formulario para corregir premios de una Polla ARCHIVADA, sin
+// desarchivarla (evita recalcular standings y mover datos solo para arreglar
+// un texto). Al abrirse, precarga los premios actuales.
+function toggleArchivedPremiosForm_(){
+  const form = document.getElementById('archivedPremiosForm');
+  const showing = form.style.display !== 'none';
+  if(!showing){
+    document.getElementById('premio1FixInput').value = currentPolla.premio1 || '';
+    document.getElementById('premio2FixInput').value = currentPolla.premio2 || '';
+    document.getElementById('premio3FixInput').value = currentPolla.premio3 || '';
+  }
+  form.style.display = showing ? 'none' : '';
+}
+async function saveArchivedPremiosFix_(){
+  const premio1 = document.getElementById('premio1FixInput').value.trim();
+  const premio2 = document.getElementById('premio2FixInput').value.trim();
+  const premio3 = document.getElementById('premio3FixInput').value.trim();
+  const result = await apiPost({action:'editArchivedPremios', id: currentPolla.id, premio1, premio2, premio3, pin: adminPin, adminName: adminName});
+  if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
+  currentPolla.premio1 = premio1; currentPolla.premio2 = premio2; currentPolla.premio3 = premio3;
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  document.getElementById('archivedPremiosForm').style.display = 'none';
+  alert('✅ Premios corregidos.');
+}
+async function finalizePolla(){
+  const pending = matches.filter(m => !m.resultSubmitted && !m.isCanceled);
+
+  // 🏆 Antes de mostrar el confirm(), calculamos el podio con los datos
+  // actuales para que el admin vea de una vez quién va a quedar campeón
+  // (y pueda cancelar y corregir algo si el resultado se ve raro), en vez
+  // de enterarse recién DESPUÉS de confirmar.
+  const standings = await getStandingsCached_().catch(()=>[]);
+  const medals = ['🥇','🥈','🥉'];
+  const podium = groupPodium(standings);
+
+  let msg;
+  if(podium.length === 0){
+    msg = `¿Finalizar la Polla # ${currentPolla.number}?\n\nTodavía no hay pronósticos registrados, así que no hay podio que calcular.\n\nQuedará archivada automáticamente. ¿Confirmar?`;
+  } else {
+    const podiumText = podium.map(s => `${medals[s.medalIdx] || '🎖️'} ${s.name}: ${s.totalPoints} pts`).join('\n');
+    const campeonesArr = podium.filter(s => s.medalIdx === 0).map(s => s.name);
+    const campeones = campeonesArr.join(' y ');
+    msg = `¿Finalizar la Polla # ${currentPolla.number}?\n\n${podiumText}\n\nSe registrará a ${campeones} como campeón${campeonesArr.length > 1 ? 'es' : ''}. Quedará archivada automáticamente. ¿Confirmar?`;
+  }
+  if(pending.length > 0){
+    const nums=pending.map(m=>`#${m.matchNumber}`).join(', ');
+    alert(`❌ No se puede finalizar todavía.\n\nFaltan ${pending.length} partido(s) por resolver o cancelar: ${nums}.`);
+    return;
+  }
+  msg = `✅ Todos los partidos están resueltos o cancelados.\n✅ Tabla calculada.\n✅ Podio revisado.\n\n${msg}`;
+  if(!confirm(msg)) return;
+  const result=await apiPost({action:'editPolla', id: currentPolla.id, status:'finalizada', pin: adminPin, adminName: adminName});
+  if(!result.ok){alert(result.error||'No se pudo finalizar.');return;}
+  currentPolla.status = 'finalizada';
+  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  const updated = allPollas.find(p => p.id === currentPolla.id);
+  if(updated) currentPolla = updated;
+  alert('🏁 Polla finalizada y archivada. Ya se puede ver su tabla y ganadores, pero para corregirla hay que desarchivarla y luego reabrirla explícitamente desde "Administrar Pollas".');
+  updateWinnersButtonVisibility();
+  closeOverlay('adminOverlay');
+}
+let secureBackupBusy_ = false;
+
+function bytesLabel_(bytes){
+  const n=Number(bytes)||0;
+  if(n < 1024) return `${n} B`;
+  if(n < 1024*1024) return `${(n/1024).toFixed(1)} KB`;
+  return `${(n/(1024*1024)).toFixed(1)} MB`;
+}
+
+function renderSecureBackupStatus_(result){
+  const badge=document.getElementById('secureBackupBadge');
+  const box=document.getElementById('secureBackupStatus');
+  if(!badge || !box) return;
+  if(!result?.hasBackup){
+    badge.textContent='Sin respaldo';
+    badge.className='secure-backup-badge';
+    box.innerHTML='Todavía no hay un respaldo seguro verificado para esta Polla.';
+    return;
+  }
+  const r=result.receipt||{};
+  const when=r.created_at ? fmtDate(r.created_at) : 'fecha no disponible';
+  badge.textContent='✓ Verificado';
+  badge.className='secure-backup-badge ok';
+  box.innerHTML=`<b>Último respaldo:</b> ${escapeHtml(when)}<br><span class="hint">${Number(r.participant_count)||0} participantes · ${Number(r.match_count)||0} partidos · ${Number(r.prediction_count)||0} pronósticos · ${Number(r.image_count)||0} imágenes · ${escapeHtml(bytesLabel_(r.size_bytes))}</span><br><span class="hint">SHA-256: ${escapeHtml(String(r.sha256||'').slice(0,20))}…</span>`;
+}
+
+async function refreshSecureBackupStatus_(showErrors=false){
+  if(!currentPolla) return;
+  const box=document.getElementById('secureBackupStatus');
+  if(box) box.textContent='Revisando respaldo…';
+  try{
+    const result=await apiPostSilent({action:'getSecurePollaBackupStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el respaldo.');
+    renderSecureBackupStatus_(result);
+    await refreshCompactionSealStatus_(false);
+    await refreshStorageCleanupStatus_(false);
+  }catch(e){
+    if(box) box.textContent='No se pudo verificar el estado del respaldo.';
+    if(showErrors) alert(e?.message||'No se pudo revisar el respaldo.');
+  }
+}
+
+function renderCompactionPrecheck_(result){
+  const badge=document.getElementById('compactionPrecheckBadge');
+  const status=document.getElementById('compactionPrecheckStatus');
+  const list=document.getElementById('compactionPrecheckChecks');
+  if(!badge||!status||!list) return;
+  const ready=!!result?.ready;
+  badge.textContent=ready?'✓ Listo':'Bloqueado';
+  badge.className='secure-backup-badge'+(ready?' ok':'');
+  status.className=ready?'compaction-ready':'compaction-blocked';
+  status.textContent=ready
+    ? 'Todo coincide. Esta Polla supera el pre-chequeo de seguridad.'
+    : (result?.needsNewBackup?'Hay cambios o el respaldo es anterior a F2. Genera un respaldo seguro nuevo y vuelve a comprobar.':'Hay una verificación pendiente o fallida.');
+  list.innerHTML=(result?.checks||[]).map(c=>`<div class="compaction-check"><span class="mark">${c.ok?'✅':'❌'}</span><span><b>${escapeHtml(c.label||'Comprobación')}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</span></div>`).join('');
+}
+
+async function runCompactionPrecheck_(){
+  if(!currentPolla) return;
+  const btn=document.getElementById('compactionPrecheckBtn');
+  const old=btn?.textContent;
+  if(btn){btn.disabled=true;btn.textContent='Verificando…';}
+  try{
+    const result=await apiPost({action:'getCompactionPrecheck',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo ejecutar el pre-chequeo.');
+    renderCompactionPrecheck_(result);
+    if(result.ready) alert('✅ Pre-chequeo aprobado. El respaldo está íntegro y los datos no cambiaron desde que se generó.\n\nF4 aún no compacta hasta que pulses el botón de Compactación V2.');
+  }catch(e){
+    alert(e?.message||'No se pudo ejecutar el pre-chequeo.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||'🔎 Verificar antes de compactar';}
+  }
+}
+
+
+function renderCompactionSealStatus_(result){
+  const badge=document.getElementById('compactionSealBadge');
+  const status=document.getElementById('compactionSealStatus');
+  const details=document.getElementById('compactionSealDetails');
+  if(!badge||!status||!details) return;
+  if(!result?.hasSeal){
+    badge.textContent='Sin preparar';
+    badge.className='secure-backup-badge';
+    status.className='hint';
+    status.textContent='Aún no existe un sello de compactación preparado para el respaldo vigente.';
+    details.innerHTML='';
+    return;
+  }
+  const seal=result.seal||{};
+  badge.textContent='✓ Preparado';
+  badge.className='secure-backup-badge ok';
+  badge.style.color='#111';
+  status.className='compaction-ready';
+  status.textContent='Estado aprobado congelado en servidor. Todavía no se ha eliminado ningún dato.';
+  const counts=seal.counts||{};
+  details.innerHTML=[
+    ['Respaldo vinculado', String(seal.backupSha256||'').slice(0,16)+'…'],
+    ['Huella de datos', String(seal.snapshotSha256||'').slice(0,16)+'…'],
+    ['Participantes', Number(counts.participants)||0],
+    ['Partidos', Number(counts.matches)||0],
+    ['Pronósticos', Number(counts.predictions)||0],
+  ].map(([label,value])=>`<div class="compaction-check"><span class="mark">✅</span><span><b>${escapeHtml(String(label))}</b><small>${escapeHtml(String(value))}</small></span></div>`).join('');
+}
+
+async function refreshCompactionSealStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getCompactionSealStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar el sello.');
+    renderCompactionSealStatus_(result);
+  }catch(e){
+    if(showErrors) alert(e?.message||'No se pudo revisar el sello de compactación.');
+  }
+}
+
+async function prepareCompactionSeal_(){
+  if(!currentPolla) return;
+  const btn=document.getElementById('compactionSealBtn');
+  const old=btn?.textContent;
+  if(!confirm('🛡️ Preparar sello de compactación\n\nEl servidor repetirá todas las verificaciones y guardará una copia inmutable del estado aprobado.\n\nNo se borrará ningún dato. ¿Continuar?')) return;
+  if(btn){btn.disabled=true;btn.textContent='Preparando sello…';}
+  try{
+    const result=await apiPost({action:'prepareCompactionSeal',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo preparar el sello.');
+    renderCompactionSealStatus_({ok:true,hasSeal:true,seal:result.seal});
+    alert('✅ Sello preparado. El estado aprobado quedó congelado en servidor.\n\nEl sello quedó preparado; aún no se eliminó ningún dato.');
+  }catch(e){
+    alert(e?.message||'No se pudo preparar el sello de compactación.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||'🛡️ Preparar sello seguro';}
+  }
+}
+
+
+async function compactPollaV2_(){
+  if(!currentPolla) return;
+  const pre=await apiPost({action:'getCompactionPrecheck',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!pre?.ok || !pre.ready){
+    alert('⛔ La compactación está bloqueada. Ejecuta primero el pre-chequeo y asegúrate de que todo esté en Listo.');
+    return;
+  }
+  const sealState=await apiPostSilent({action:'getCompactionSealStatus',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!sealState?.ok || !sealState.hasSeal || sealState.seal?.status==='consumed'){
+    alert('⛔ Falta un sello preparado y vigente. Prepara el sello seguro antes de compactar.');
+    return;
+  }
+  const message=`Confirma tu clave para compactar la Polla #${currentPolla.number}. Esta acción elimina de Postgres las filas pesadas de partidos, pronósticos, participantes y referidos, pero conserva el snapshot histórico y el ZIP verificado.`;
+  const result=await withSensitiveAdminConfirmation_('compactPollaV2',message,async()=>{
+    if(!confirm(`🗜️ COMPACTACIÓN V2 — Polla #${currentPolla.number}\n\nEsta operación es irreversible desde la interfaz. El respaldo ZIP y el snapshot histórico quedarán conservados.\n\nLas imágenes originales NO se borrarán en F4.\n\n¿Compactar ahora?`)) return null;
+    const btn=document.getElementById('compactionRunBtn');
+    const old=btn?.textContent;
+    if(btn){btn.disabled=true;btn.textContent='Compactando…';}
+    try{
+      return await apiPost({action:'compactPollaV2',pollaId:currentPolla.id,sealId:sealState.seal.id,adminName:adminName});
+    }finally{
+      if(btn){btn.disabled=false;btn.textContent=old||'🗜️ Compactar datos históricos';}
+    }
+  });
+  if(!result) return;
+  if(!result.ok){ alert(result.error||'No se pudo compactar. No se aplicaron cambios parciales.'); return; }
+  const badge=document.getElementById('compactionRunBadge');
+  const status=document.getElementById('compactionRunStatus');
+  if(badge){badge.textContent='✓ Compactada';badge.className='secure-backup-badge ok';badge.style.color='#111';}
+  if(status){status.className='compaction-ready';status.textContent=`Compactación completada. ${Number(result.matchesRemoved)||0} partidos y ${Number(result.predictionsRemoved)||0} pronósticos salieron de las tablas operativas; el histórico protegido permanece disponible.`;}
+  invalidateStandingsCaches_();
+  allPollas=await apiGet('getPollas').catch(()=>allPollas);
+  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  alert('✅ Compactación V2 completada dentro de una transacción. El histórico, el respaldo seguro y la acumulada anual quedaron conservados.');
+}
+
+function renderStorageCleanupStatus_(result){
+  const badge=document.getElementById('storageCleanupBadge');
+  const status=document.getElementById('storageCleanupStatus');
+  const btn=document.getElementById('storageCleanupBtn');
+  if(!badge||!status||!btn) return;
+  badge.style.color='#111';
+  status.style.color='#111';
+  if(!result?.compacted){
+    badge.textContent='Aún no';
+    badge.className='secure-backup-badge';
+    status.textContent='Primero debe completarse la compactación V2. F5 no puede limpiar imágenes antes de que exista un histórico protegido.';
+    btn.disabled=true;
+    return;
+  }
+  if(result.cleaned){
+    badge.textContent='✓ Limpio';
+    badge.className='secure-backup-badge ok';
+    badge.style.color='#111';
+    const when=result.cleanedAt?fmtDate(result.cleanedAt):'fecha no disponible';
+    status.textContent=`Limpieza completada ${when}. ${Number(result.removedCount)||0} archivo(s) del bucket operativo eliminados; ${Number(result.skippedCount)||0} imagen(es) externa(s) conservadas.`;
+    btn.disabled=true;
+    btn.textContent='✓ Imágenes ya limpiadas';
+    return;
+  }
+  if(result.status==='partial'){
+    badge.textContent='Revisar';
+    badge.className='secure-backup-badge';
+    status.textContent='Una limpieza anterior no terminó completamente. Puedes reintentar: el servidor volverá a verificar el ZIP antes de continuar.';
+    btn.disabled=false;
+    btn.textContent='🧹 Reintentar limpieza segura';
+    return;
+  }
+  badge.textContent='Pendiente';
+  badge.className='secure-backup-badge';
+  status.textContent='La Polla ya está compactada. F5 volverá a verificar tamaño, SHA-256 y contenido del ZIP antes de borrar imágenes del bucket tico-images.';
+  btn.disabled=false;
+  btn.textContent='🧹 Limpiar imágenes respaldadas';
+}
+
+async function refreshStorageCleanupStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getStorageCleanupStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar la limpieza de imágenes.');
+    renderStorageCleanupStatus_(result);
+  }catch(e){
+    const status=document.getElementById('storageCleanupStatus');
+    if(status){status.style.color='#111';status.textContent='No se pudo revisar el estado de limpieza.';}
+    if(showErrors) alert(e?.message||'No se pudo revisar el estado de limpieza.');
+  }
+}
+
+async function cleanupCompactedStorage_(){
+  if(!currentPolla) return;
+  const state=await apiPostSilent({action:'getStorageCleanupStatus',pollaId:currentPolla.id,adminName:adminName}).catch(()=>null);
+  if(!state?.ok || !state.compacted){
+    alert('⛔ Primero debes completar la compactación V2 de esta Polla.');
+    return;
+  }
+  if(state.cleaned){
+    alert('✓ Las imágenes operativas de esta Polla ya fueron limpiadas.');
+    renderStorageCleanupStatus_(state);
+    return;
+  }
+  const msg=`Confirma tu clave para limpiar las imágenes operativas de la Polla #${currentPolla.number}. Antes de borrar, el servidor volverá a descargar y verificar el ZIP seguro completo.`;
+  const result=await withSensitiveAdminConfirmation_('cleanupCompactedPollaStorage',msg,async()=>{
+    if(!confirm(`🧹 LIMPIEZA SEGURA — Polla #${currentPolla.number}
+
+Se eliminarán del bucket tico-images únicamente los archivos que ya están incluidos en el ZIP verificado.
+
+El ZIP privado, el histórico protegido, los puntos, ganadores y jugadores NO se borrarán.
+
+¿Continuar?`)) return null;
+    const btn=document.getElementById('storageCleanupBtn');
+    const old=btn?.textContent;
+    if(btn){btn.disabled=true;btn.textContent='Verificando ZIP y limpiando…';}
+    try{
+      return await apiPost({action:'cleanupCompactedPollaStorage',pollaId:currentPolla.id,adminName:adminName});
+    }finally{
+      if(btn){btn.disabled=false;btn.textContent=old||'🧹 Limpiar imágenes respaldadas';}
+    }
+  });
+  if(!result) return;
+  if(!result.ok){
+    alert(result.error||'La limpieza no pudo completarse. El respaldo y el histórico siguen protegidos.');
+    await refreshStorageCleanupStatus_(false);
+    return;
+  }
+  await refreshStorageCleanupStatus_(false);
+  allPollas=await apiGet('getPollas').catch(()=>allPollas);
+  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  renderLanding();
+  alert(`✅ Limpieza F5 completada.
+
+${Number(result.removedCount)||0} archivo(s) de Storage eliminados.
+${Number(result.skippedCount)||0} imagen(es) externa(s) conservadas.
+
+El ZIP seguro y el histórico compacto permanecen intactos.`);
+}
+
+
+function renderFinalArchiveAudit_(result){
+  const badge=document.getElementById('finalArchiveAuditBadge');
+  const status=document.getElementById('finalArchiveAuditStatus');
+  const list=document.getElementById('finalArchiveAuditChecks');
+  const btn=document.getElementById('finalArchiveAuditBtn');
+  if(!badge||!status||!list||!btn) return;
+  badge.style.color='#111'; status.style.color='#111';
+  if(!result?.audited){
+    badge.textContent='Sin revisar'; badge.className='secure-backup-badge';
+    status.textContent='Ejecuta la auditoría final para comprobar histórico, ZIP, acumulada y limpieza después de la compactación.';
+    list.innerHTML=''; btn.disabled=false; return;
+  }
+  const ok=result.status==='passed' || result.ok===true;
+  badge.textContent=ok?'✓ Protegida':'Revisar';
+  badge.className=ok?'secure-backup-badge ok':'secure-backup-badge';
+  badge.style.color='#111';
+  const when=result.auditedAt?fmtDate(result.auditedAt):'fecha no disponible';
+  status.textContent=ok?`Auditoría final aprobada ${when}. El histórico compacto quedó coherente y protegido.`:`La última auditoría (${when}) detectó algo que requiere revisión.`;
+  const checks=result.report?.checks || result.checks || [];
+  list.innerHTML=checks.map(c=>`<div class="compaction-check final-audit-check"><span class="mark">${c.ok?'✅':'❌'}</span><span><b>${escapeHtml(c.label||'Comprobación')}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</span></div>`).join('');
+  btn.disabled=false; btn.textContent='🧾 Ejecutar auditoría final';
+}
+async function refreshFinalArchiveAuditStatus_(showErrors=false){
+  if(!currentPolla) return;
+  try{
+    const result=await apiPostSilent({action:'getFinalArchiveAuditStatus',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo revisar la auditoría final.');
+    renderFinalArchiveAudit_(result);
+  }catch(e){
+    const status=document.getElementById('finalArchiveAuditStatus');
+    if(status){status.style.color='#111';status.textContent='No se pudo revisar el estado de la auditoría final.';}
+    if(showErrors) alert(e?.message||'No se pudo revisar la auditoría final.');
+  }
+}
+async function runFinalArchiveAudit_(){
+  if(!currentPolla) return;
+  if(!confirm(`🧾 Auditoría final — Polla #${currentPolla.number}\n\nSe verificará nuevamente el ZIP, el histórico protegido, la limpieza de tablas operativas y el arrastre de la tabla anual.\n\nNo se borrará ningún dato. ¿Continuar?`)) return;
+  const btn=document.getElementById('finalArchiveAuditBtn');
+  const old=btn?.textContent;
+  if(btn){btn.disabled=true;btn.textContent='Auditando…';}
+  try{
+    const result=await apiPost({action:'runFinalArchiveAudit',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok){ alert(result?.error||'La auditoría final no pudo completarse.'); if(result?.report) renderFinalArchiveAudit_({audited:true,status:'failed',auditedAt:new Date().toISOString(),report:result.report}); return; }
+    renderFinalArchiveAudit_(result);
+    if(result.status==='passed') alert('✅ Auditoría F6 aprobada. Esta Polla quedó compactada, respaldada y protegida correctamente.');
+    else alert('⚠️ La auditoría terminó, pero detectó comprobaciones pendientes. Revisa el detalle antes de cerrar el Paquete F.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||'🧾 Ejecutar auditoría final';}
+  }
+}
+
+async function createSecurePollaBackup_(){
+  if(secureBackupBusy_ || !currentPolla) return;
+  if(currentPolla.status!=='finalizada' || !currentPolla.isArchived){
+    alert('🛡️ El respaldo seguro se habilita cuando la Polla está finalizada y archivada.');
+    return;
+  }
+  if(!confirm(`🛡️ Generar respaldo seguro\n\nSe creará un ZIP privado con datos + imágenes reales y se registrará una huella SHA-256 en el servidor.\n\n¿Continuar?`)) return;
+  secureBackupBusy_=true;
+  const btn=document.getElementById('secureBackupCreateBtn');
+  const old=btn?.textContent;
+  if(btn){ btn.disabled=true; btn.textContent='Generando respaldo…'; }
+  try{
+    const result=await apiPost({action:'createSecurePollaBackup',pollaId:currentPolla.id,adminName:adminName});
+    if(!result?.ok) throw new Error(result?.error||'No se pudo generar el respaldo seguro.');
+    if(result.signedUrl){
+      const a=document.createElement('a');
+      a.href=result.signedUrl;
+      a.download=`LaPollaTICO_Polla_${currentPolla.number}_respaldo_seguro.zip`;
+      a.rel='noopener';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    await refreshSecureBackupStatus_(false);
+    await runCompactionPrecheck_();
+    const shortHash=String(result.receipt?.sha256||'').slice(0,12);
+    alert(`✅ Respaldo seguro verificado.
+
+Huella: ${shortHash || 'registrada'}
+Tamaño: ${bytesLabel_(result.receipt?.sizeBytes)}
+
+El pre-chequeo y el sello seguro están habilitados. La compactación V2 solo se ejecuta desde su botón y exige confirmación reforzada.`);
+  }catch(e){
+    alert(e?.message||'No se pudo generar el respaldo seguro. No se modificó ningún dato de la Polla.');
+  }finally{
+    secureBackupBusy_=false;
+    if(btn){ btn.disabled=false; btn.textContent=old||'🛡️ Generar respaldo seguro (.zip)'; }
+  }
+}
+
+async function exportPollaBackup(){
+  const backup=await apiPost({action:'getPollaBackup',pollaId:currentPolla.id,pin:adminPin,adminName:adminName}).catch(()=>null);
+  if(!backup?.ok){alert(backup?.error||'No se pudo generar el respaldo de esta Polla.');return;}
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `respaldo_polla_${currentPolla.number}_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+async function exportGlobalBackup(){
+  const result = await apiPost({action:'getGlobalBackup', pin: adminPin, adminName: adminName});
+  if(!result || result.error){ alert(result && result.error ? result.error : 'No se pudo generar el respaldo global.'); return; }
+  const blob = new Blob([JSON.stringify(result, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `respaldo_global_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+// Historial de auditoría: quién hizo qué cambio administrativo y cuándo.
+async function loadAdminLog(){
+  const box = document.getElementById('adminLogList');
+  box.innerHTML = '<p class="hint">Cargando...</p>';
+  const result = await apiPost({action:'getAdminLog', pin: adminPin, adminName: adminName});
+  if(!Array.isArray(result)){ box.innerHTML = `<p class="hint">${result.error || 'No se pudo cargar el historial.'}</p>`; return; }
+  if(result.length === 0){ box.innerHTML = '<p class="hint">Todavía no hay cambios registrados.</p>'; return; }
+  box.innerHTML = result.map(r => `
+    <div class="list-item">
+      <div class="top-row">
+        <div class="info">
+          <span><b>${escapeHtml(r.adminName || 'Sin nombre')}</b> · ${escapeHtml(r.action)}
+          <small>${fmtDate(r.timestamp)}${r.details ? ' · ' + escapeHtml(r.details) : ''}</small></span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openCommunicationsCenter(){
+  openOverlay('communicationsOverlay');
+  buildCommunication('openRegistration');
+}
+const COMM_ARTWORKS={
+  openRegistration:'comunicados/07_ya_abrimos_inscripciones.png',
+  invite:'comunicados/06_invita_amigos.png',
+  jornada:'comunicados/01_aviso_importante.png',
+  last:'comunicados/02_ultimos_minutos.png',
+  todayReview:'comunicados/08_revisa_pronosticos_jornada_hoy.png',
+  payment:'comunicados/03_recordatorio_pago.png',
+  paymentMethods:'comunicados/09_metodos_de_pago.png',
+  results:'comunicados/04_resultados_disponibles.png',
+  qualified:'comunicados/05_clasificados_polla_gratuita.png',
+  custom:null
+};
+let currentCommunicationType='openRegistration';
+function setCommunicationArtwork_(type){
+  currentCommunicationType=type;
+  const img=document.getElementById('communicationArtwork');
+  if(!img) return;
+  const src=COMM_ARTWORKS[type];
+  if(!src){img.removeAttribute('src');img.style.display='none';return;}
+  img.onload=()=>{img.style.display='block';};
+  img.onerror=()=>{img.style.display='none';};
+  img.src=src;
+}
+function formatPollaStartForCommunication_(startDate){
+  if(!startDate) return 'Fecha de inicio por confirmar';
+  const raw=String(startDate);
+  const d=new Date(raw.length<=10 ? `${raw}T05:00:00Z` : raw);
+  if(isNaN(d.getTime())) return 'Fecha de inicio por confirmar';
+  return d.toLocaleDateString('es-PE',{timeZone:APP_TIME_ZONE,weekday:'long',day:'numeric',month:'long',year:'numeric'});
+}
+function formatTodayForCommunication_(){
+  return new Date().toLocaleDateString('es-PE',{timeZone:APP_TIME_ZONE,weekday:'long',day:'numeric',month:'long'});
+}
+async function buildCommunication(type){
+  setCommunicationArtwork_(type);
+  const p=currentPolla||{}; const url=`${siteUrl()}?polla=${p.id||''}`; let txt='';
+  if(type==='openRegistration'){
+    const startLabel=formatPollaStartForCommunication_(p.startDate);
+    txt=`📣 ¡YA ABRIMOS INSCRIPCIONES! · Polla TICO #${p.number||''}\n\nYa puedes asegurar tu lugar y empezar a preparar tus pronósticos.\n\n📅 Inicio de la Polla: ${startLabel}.\n\n👉 Entra aquí para inscribirte y revisar los partidos:\n${url}\n\n— Manolo, Administración TICO`;
+  }
+  else if(type==='invite') txt=`⚽ POLLA TICO #${p.number||''}\n\n¡Ya puedes participar! Revisa los partidos y envía tus pronósticos aquí:\n${url}\n\n— Manolo, Administración TICO`;
+  else if(type==='last') txt=`⏳ ¡Últimos minutos! · Polla TICO #${p.number||''}\n\nRevisa que tus pronósticos estén enviados antes de la hora límite.\n${url}\n\n— Manolo`;
+  else if(type==='payment') txt=`💳 Recordatorio de pago · Polla TICO #${p.number||''}\n\nRecuerda completar tu inscripción antes del inicio de la Polla. Si ya realizaste el pago, ignora este mensaje.\n\n— Manolo, Administración TICO`;
+  else if(type==='paymentMethods') txt=`💰 MÉTODOS DE PAGO · Polla TICO #${p.number||''}\n\nPuedes realizar tu pago por cualquiera de estas opciones:\n\n📱 Yape / Plin: +51 994 339 859\n💳 Visa / transferencia bancaria\nNúmero de cuenta: 087 3091286892\nCCI: 00308701309128689249\n\nDespués de realizar el pago, envía tu comprobante a Manolo para confirmar tu inscripción.\n\n— Manolo, Administración TICO`;
+  else if(type==='jornada') txt=`⏰ Recordatorio de jornada · Polla TICO #${p.number||''}\n\nHay partidos próximos a cerrar. Revisa tus pronósticos:\n${url}\n\n— Manolo`;
+  else if(type==='todayReview'){
+    const todayKey=dateKeyFromDate_(new Date());
+    const todayMatches=matches.filter(m=>dateGroupKey(m.closeAt)===todayKey && !m.isCanceled);
+    const resolved=todayMatches.filter(m=>m.resultSubmitted).length;
+    const dateLabel=formatTodayForCommunication_();
+    const statusLine=todayMatches.length ? `Ya están cargados ${resolved} de ${todayMatches.length} resultado(s) de la jornada de hoy.` : 'Los resultados de la jornada de hoy ya están disponibles.';
+    txt=`✅ Revisa los pronósticos de la jornada de hoy · Polla TICO #${p.number||''}\n\n${statusLine}\n\n📅 ${dateLabel}\n\nEntra a la app para comparar tus pronósticos, revisar tus puntos y ver cómo quedó la jornada:\n${url}\n\n— Manolo, Administración TICO`;
+  }
+  else if(type==='results'){
+    const standings=await apiGet('getStandings',{pollaId:p.id}).catch(()=>[]); const podium=groupPodium(standings); const medals=['🥇','🥈','🥉'];
+    txt=`🏆 Resultados · Polla TICO #${p.number||''}\n\n${podium.length?podium.map(x=>`${medals[x.medalIdx]} ${x.name} — ${x.totalPoints} pts`).join('\n'):'La tabla ya fue actualizada.'}\n\nRevisa la tabla completa en la app.\n\n— Manolo`;
+  } else if(type==='qualified'){
+    const stats=await apiGet('getFreeContestStats').catch(()=>null);
+    const names=stats?.qualifiedNames||[];
+    txt=`🎟️ Clasificados a la Polla Gratuita\n\n${names.length?names.map((n,i)=>`${i+1}. ${n}`).join('\n'):'La lista de clasificados ya está disponible en la app.'}\n\nClasificación según la Tabla Acumulada vigente.\n\n— Manolo, Administración TICO`;
+  } else txt=`📣 COMUNICADO TICO\n\nEscribe aquí tu comunicado.\n\n— Manolo\nAdministración TICO`;
+  document.getElementById('communicationText').value=txt;
+}
+async function copyCommunication(){await copyTextSafe(document.getElementById('communicationText').value);alert('✅ Texto del comunicado copiado.');}
+async function shareCommunicationWithArtwork(){
+  const txt=document.getElementById('communicationText').value.trim();
+  if(!txt) return;
+  const src=COMM_ARTWORKS[currentCommunicationType];
+  if(src){
+    try{
+      const res=await fetch(src,{cache:'no-store'});
+      if(res.ok){
+        const blob=await res.blob();
+        const file=new File([blob],`comunicado-${currentCommunicationType}.png`,{type:blob.type||'image/png'});
+        if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+          await navigator.share({title:'LaPollaTICO',text:txt,files:[file]});
+          return;
+        }
+        const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+      }
+    }catch(e){console.warn('No se pudo preparar la imagen del comunicado:',e);}
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,'_blank');
+}
+function sendCommunicationWhatsApp(){ return shareCommunicationWithArtwork(); }
+async function copyAdminList(){
+  const type=document.getElementById('adminListType').value;
+  let names=[]; let title='';
+  if(type==='qualified'){
+    const stats=await apiGet('getFreeContestStats').catch(()=>null);
+    names=stats?.qualifiedNames||[]; title='Clasificados actuales a la Polla Gratuita';
+  }else{
+    const parts=await apiPost({action:'getParticipantsAdmin',pollaId:currentPolla.id,pin:adminPin,adminName:adminName}).catch(()=>null);
+    if(!Array.isArray(parts)){alert(parts?.error||'No se pudo cargar la lista.');return;}
+    if(type==='all'){names=parts.map(p=>p.name);title=`Participantes · Polla TICO #${currentPolla.number}`;}
+    if(type==='paid'){names=parts.filter(p=>p.paid).map(p=>p.name);title=`Pagados · Polla TICO #${currentPolla.number}`;}
+    if(type==='pending'){names=parts.filter(p=>!p.paid).map(p=>p.name);title=`Pendientes de pago · Polla TICO #${currentPolla.number}`;}
+    if(type==='activation'){names=parts.filter(p=>p.activationStatus!=='ACTIVE').map(p=>p.name);title=`Pendientes de activación · Polla TICO #${currentPolla.number}`;}
+  }
+  const text=`${title}\n${names.length?names.map((n,i)=>`${i+1}. ${n}`).join('\n'):'— Sin nombres —'}`;
+  const ok=await copyTextSafe(text);
+  alert(ok?`✅ Lista copiada (${names.length}).`:'No se pudo copiar automáticamente.');
+}
+
+/* ============ TABLAS ============ */
+async function showResults(matchId, adminMode=false){
+  if(busyFlags['results_'+matchId]) return;
+  busyFlags['results_'+matchId] = true;
+  const match = matches.find(m => m.id === matchId);
+  document.getElementById('resultsTitle').textContent = `Partido ${match.matchNumber}: ${match.home} vs ${match.away}`;
+  document.getElementById('resultsTable').innerHTML = '<tr><td>Cargando...</td></tr>';
+  const missingBox = document.getElementById('resultsMissingBox');
+  missingBox.innerHTML = '';
+  openOverlay('resultsOverlay');
+  try{
+    let preds;
+    if(adminMode){
+      const adminResult = await apiPost({
+        action:'getAdminMatchPredictions',
+        matchId,
+        pin:adminPin,
+        adminName:adminName
+      }).catch(()=>null);
+      if(!adminResult?.ok || !Array.isArray(adminResult.predictions)){
+        document.getElementById('resultsTable').innerHTML = '<tr><td>⚠️ No se pudieron cargar los pronósticos. Intenta nuevamente.</td></tr>';
+        missingBox.innerHTML = '<b>⚠️ No se pudo verificar quién falta.</b>';
+        return;
+      }
+      preds = adminResult.predictions;
+      adminPredictionsCache[matchId] = preds;
+      adminPredictionSummaryCache[matchId] = preds.length;
+      adminPredictionSummaryPollaId = currentPolla?.id || adminPredictionSummaryPollaId;
+    } else {
+      try { preds = await apiGet('getPredictions', {matchId, pollaId: currentPolla ? currentPolla.id : ''}); }
+      catch(e){
+        document.getElementById('resultsTable').innerHTML = '<tr><td>⚠️ No se pudieron cargar los pronósticos. Intenta nuevamente.</td></tr>';
+        return;
+      }
+      if(!Array.isArray(preds)) preds = [];
+      predictionsCache[matchId] = preds;
+    }
+    const table = document.getElementById('resultsTable');
+    let userScoredExactOrMVP = false;
+
+    if(preds.length === 0){ table.innerHTML = '<tr><td>Nadie ha enviado pronóstico todavía.</td></tr>'; }
+    else{
+      const maxPts = match.resultSubmitted ? Math.max(...preds.map(p => Number(p.points)||0)) : null;
+      let rows = `<tr><th>Nombre</th><th>Pronóstico</th>${match.resultSubmitted ? '<th>Puntos</th>' : ''}</tr>`;
+      
+      preds.sort((a,b)=>a.name.localeCompare(b.name)).forEach(p => {
+        const isExact = match.resultSubmitted && Number(p.home) === Number(match.actualHome) && Number(p.away) === Number(match.actualAway);
+        const isMVP = match.resultSubmitted && maxPts > 0 && Number(p.points) === maxPts;
+        const isMe = authedName && normalizeName(p.name) === normalizeName(authedName);
+
+        if(isMe && (isExact || isMVP)) userScoredExactOrMVP = true;
+
+        /* PARCHE MVP PEAGADO AL NOMBRE DEL PARTICIPANTE */
+        rows += `<tr>
+          <td>
+            <span style="display:inline-flex; align-items:center;">
+              ${escapeHtml(p.name)}
+              ${isMVP ? `<span class="mvp-patch">${ICON_GOLD_EGG}MVP</span>` : ''}
+            </span>
+          </td>
+          <td>${p.home} - ${p.away}</td>
+          ${match.resultSubmitted ? `<td class="pts${isExact?' max':''}">${p.points ?? 0}</td>` : ''}
+        </tr>`;
+      });
+      table.innerHTML = rows;
+    }
+
+    if(userScoredExactOrMVP) setTimeout(launchConfetti, 200);
+
+    // 👀 "Quiénes faltan" solo se muestra si hay un admin con sesión activa en
+    // este dispositivo (adminPin) — es información interna del panel admin,
+    // no algo que vea cualquier participante que abra "Ver pronósticos de
+    // todos", y ya NO se manda por WhatsApp (ver sendJornadaReminder).
+    if(adminMode && !match.isCanceled && !match.resultSubmitted){
+      const missing = await getMissingForMatch_(matchId).catch(()=>[]);
+      if(missing === null){
+        missingBox.innerHTML = `<b>⚠️ No se pudo verificar quién falta. Reintenta.</b>`;
+      } else if(missing.length > 0){
+        missingBox.innerHTML = `<b>⏳ Todavía faltan ${missing.length}:</b><br>${missing.map(n => escapeHtml(n)).join(', ')}`;
+      } else {
+        missingBox.innerHTML = `<b>🎉 Todos los participantes ya enviaron su pronóstico.</b>`;
+      }
+    }
+
+  } finally { busyFlags['results_'+matchId] = false; }
+}
+
+function getPrevRanks(key){ try{ return JSON.parse(localStorage.getItem('ranks_'+key) || '{}'); }catch(e){ return {}; } }
+function saveRanks(key, standings){
+  const ranks = {}; standings.forEach((s,i) => ranks[normalizeName(s.name)] = i);
+  localStorage.setItem('ranks_'+key, JSON.stringify(ranks));
+}
+function renderStandingsTable(tableEl, standings, rankKey, sequential){
+  const prevRanks = getPrevRanks(rankKey);
+  if(standings.length === 0){ tableEl.innerHTML = '<tr><td>Todavía no hay datos. 🕐</td></tr>'; return; }
+  const medals = ['🥇','🥈','🥉'];
+  let currentRank = 0;
+  const compRanks = standings.map((s, i) => {
+    if (sequential) return i; // tabla acumulada: cada persona con su propio número, sin premios de por medio
+    if (i > 0 && s.totalPoints < standings[i - 1].totalPoints) {
+      currentRank++;
+    }
+    return currentRank;
+  });
+
+  const isYearlyTable = rankKey === 'yearly';
+  let rows = '<tr><th>#</th><th>Nombre</th><th>Pts</th><th>PJ</th></tr>';
+
+  standings.forEach((s, i) => {
+    const key = normalizeName(s.name);
+    let move = '';
+
+    if (prevRanks[key] !== undefined) {
+      if (prevRanks[key] > i) move = '<span class="rank-move up">▲</span>';
+      else if (prevRanks[key] < i) move = '<span class="rank-move down">▼</span>';
+    }
+
+    const rIdx = compRanks[i];
+    // 🔢 En la tabla acumulada del año (isYearlyTable) siempre se muestra el
+    // número de puesto (1, 2, 3...), sin medallas, aunque la lógica de
+    // cálculo del puesto (compRanks) sea la misma para todas las tablas.
+    const rankLabel = (!isYearlyTable && medals[rIdx]) ? medals[rIdx] : (rIdx + 1);
+
+    // 🎁 Solo en la tabla acumulada del año se pinta verde/rojo según si
+    // clasifica o no a la Polla Gratuita de cierre de temporada.
+    let rowClass = '';
+    if(isYearlyTable){
+      rowClass = s.qualifiesFreeContest ? ' class="row-qualified"' : ' class="row-not-qualified"';
+    }
+
+    rows += `<tr${rowClass}><td>${move}${rankLabel}</td><td>${escapeHtml(s.name)} <button class="badges-btn" onclick="showBadges('${jsAttr(s.name)}', '${rankKey}')">🏅 Insignias</button></td><td class="pts">${s.totalPoints}</td><td>${s.matchesScored}</td></tr>`;
+  });
+  tableEl.innerHTML = rows;
+  saveRanks(rankKey, standings);
+}
+async function openStandings(){
+  if(busyFlags.standings) return;
+  busyFlags.standings = true;
+  openOverlay('standingsOverlay');
+  document.getElementById('standingsTable').innerHTML = '<tr><td>Cargando...</td></tr>';
+  try{
+    const standings = await getStandingsCached_().catch(()=>[]);
+    renderStandingsTable(document.getElementById('standingsTable'), standings, 'polla_'+currentPolla.id);
+  } finally { busyFlags.standings = false; }
+}
+async function openYearlyStandings(){
+  if(busyFlags.yearly) return;
+  busyFlags.yearly = true;
+  openOverlay('yearlyOverlay');
+  document.getElementById('yearlyTable').innerHTML = '<tr><td>Cargando...</td></tr>';
+  try{
+    const standings = await getYearlyStandingsCached_().catch(()=>[]);
+    renderStandingsTable(document.getElementById('yearlyTable'), standings, 'yearly', true);
+  } finally { busyFlags.yearly = false; }
+}
+
+/* ============ 🏆 TABLA DE GANADORES (histórico, de todas las Pollas) ============ */
+async function openHallOfFame(){
+  if(busyFlags.hallOfFame) return;
+  busyFlags.hallOfFame = true;
+  openOverlay('hallOfFameOverlay');
+  const list = document.getElementById('hallOfFameList');
+  list.innerHTML = '<p class="hint">Cargando...</p>';
+  try{
+    const ganadores = await apiGet('getGanadores').catch(()=>[]);
+    if(!ganadores || ganadores.length === 0){
+      list.innerHTML = '<p class="hint">Todavía no hay ganadores registrados.</p>';
+      return;
+    }
+    list.innerHTML = ganadores.map((g, i) => {
+      const visibleRank = i + 1;
+      return `<div class="ganador-row ${visibleRank === 1 ? 'top1' : ''}">
+        <div class="ganador-rank">${visibleRank}</div>
+        <div class="ganador-name">${escapeHtml(g.name)}</div>
+        <div class="ganador-count">${g.wins} 🏆</div>
+      </div>`;
+    }).join('');
+  } finally { busyFlags.hallOfFame = false; }
+}
+
+/* ============ INSIGNIAS MEJORADAS Y ÚNICAS ============ */
+async function showBadges(name, rankKey){
+  document.getElementById('badgesTitle').textContent = `Insignias de ${name}`;
+  document.getElementById('badgesList').innerHTML = '<p class="hint">Cargando...</p>';
+  openOverlay('badgesOverlay');
+  const isYearly = rankKey === 'yearly';
+  const standings = isYearly
+    ? await getYearlyStandingsCached_().catch(()=>[])
+    : await getStandingsCached_().catch(()=>[]);
+  const me = standings.find(s => normalizeName(s.name) === normalizeName(name));
+  const exactCount = me ? (me.exactCount || 0) : 0;
+  const mvpCount = me ? (me.mvpCount || 0) : 0;
+  const matchesPlayed = me ? (me.matchesScored || 0) : 0;
+  const scope = isYearly ? 'en todo el año' : 'en esta Polla';
+
+  const badges = [];
+
+  if(mvpCount >= 7) badges.push({icon:'👑', title:'Recolector de MVPs (Única)', desc:`¡Leyenda! Ha sido el jugador MVP en 7 o más partidos ${scope}`});
+  if(exactCount >= 5) badges.push({icon:'💎', title:'Puntería de Diamante (Especial)', desc:`5 o más marcadores exactos ${scope}`});
+  if(me && me.totalPoints >= 50) badges.push({icon:'🌟', title:'Estrella de la Polla (Especial)', desc:`Superó los 50 puntos acumulados ${scope}`});
+  if(me && me.rank === 0) badges.push({icon:'🏆', title:'Líder Supremo (Única)', desc:`Ocupa el puesto #1 actual de la clasificación`});
+
+  if(exactCount >= 1) badges.push({icon:'🎯', title:'Ojo de Águila', desc:`Acertó el marcador exacto en ${exactCount} ${exactCount===1?'partido':'partidos'}`});
+  if(exactCount >= 3) badges.push({icon:'🔥', title:'Pleno Caliente', desc:`3 o más marcadores exactos ${scope}`});
+  if(mvpCount >= 1) badges.push({icon:'🥚', title:'Jugador de la Fecha', desc:`Ha sido MVP al menos 1 vez ${scope}`});
+  if(matchesPlayed >= 3) badges.push({icon:'🌱', title:'Recién Llegado', desc:`Pronosticó sus primeros 3 partidos ${scope}`});
+  if(matchesPlayed >= 10) badges.push({icon:'🛡️', title:'Inquebrantable', desc:`10 o más partidos pronosticados ${scope}`});
+  if(me && me.totalPoints >= 20) badges.push({icon:'⚡', title:'Racha de Puntos', desc:`Superó los 20 puntos acumulados ${scope}`});
+
+  const list = document.getElementById('badgesList');
+  if(badges.length === 0){ list.innerHTML = `<p class="hint">Todavía no tiene insignias ${scope}.</p>`; }
+  else{
+    list.innerHTML = badges.map(b => `<div class="prize-row"><div class="prize-medal">${b.icon}</div><div><div class="prize-place">${b.title}</div><div class="prize-text">${b.desc}</div></div></div>`).join('');
+  }
+}
+
+function renderPrizes(){
+  const list = document.getElementById('prizesList');
+  const p = currentPolla || {};
+  const items = [
+    {medal:'🥇', place:'Primer lugar', text: p.premio1 || 'Aún no definido'},
+    {medal:'🥈', place:'Segundo lugar', text: p.premio2 || 'Aún no definido'},
+    {medal:'🥉', place:'Tercer lugar', text: p.premio3 || 'Aún no definido'},
+  ];
+  list.innerHTML = items.map(i => `<div class="prize-row"><div class="prize-medal">${i.medal}</div><div><div class="prize-place">${i.place}</div><div class="prize-text">${escapeHtml(i.text)}</div></div></div>`).join('');
+}
+const _origOpenOverlay = openOverlay;
+openOverlay = function(id){ if(id === 'prizesOverlay') renderPrizes(); _origOpenOverlay(id); };
+
+/* ============ EXPORTAR CSV ============ */
+function csvEscape(val){ const s = String(val ?? ''); if(s.includes(';') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g,'""') + '"'; return s; }
+function downloadCSV(filename, rows){
+  const BOM = '\uFEFF';
+  const content = BOM + rows.map(r => r.map(csvEscape).join(';')).join('\n');
+  const blob = new Blob([content], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+async function exportMatchCSV(matchId, adminMode=false){
+  const match = matches.find(m => m.id === matchId);
+  let preds = [];
+  if(adminMode){
+    const result = await apiPost({action:'getAdminMatchPredictions',matchId,pin:adminPin,adminName}).catch(()=>null);
+    if(!result?.ok || !Array.isArray(result.predictions)){ alert('No se pudieron cargar los pronósticos para exportar.'); return; }
+    preds = result.predictions;
+    adminPredictionsCache[matchId] = preds;
+  } else {
+    try { preds = await apiGet('getPredictions',{matchId,pollaId:currentPolla?.id||''}); }
+    catch(e){ alert('No se pudieron cargar los pronósticos para exportar.'); return; }
+  }
+  const rows = [['Partido','Equipo Local','Equipo Visitante','Nombre','Marcador Local','Marcador Visitante','Puntos']];
+  [...preds].sort((a,b)=>a.name.localeCompare(b.name)).forEach(p => rows.push([`Partido ${match.matchNumber}`, match.home, match.away, p.name, p.home, p.away, p.points ?? '']));
+  downloadCSV(`pronosticos_partido_${match.matchNumber}.csv`, rows);
+}
+async function exportAllCSV(adminMode=false){
+  const rows = [['Partido','Equipo Local','Equipo Visitante','Nombre','Marcador Local','Marcador Visitante','Puntos']];
+  let source;
+  if(adminMode){
+    const ok = await refreshAdminPredictions();
+    if(!ok){ alert('No se pudieron cargar los pronósticos para exportar.'); return; }
+    source = adminPredictionsCache;
+  } else {
+    await refreshAllPredictions();
+    source = predictionsCache;
+  }
+  matches.forEach(m => {
+    const preds = source[m.id] || [];
+    [...preds].sort((a,b)=>a.name.localeCompare(b.name)).forEach(p => rows.push([`Partido ${m.matchNumber}`, m.home, m.away, p.name, p.home, p.away, p.points ?? '']));
+  });
+  downloadCSV(`pronosticos_polla_${currentPolla.number}.csv`, rows);
+}
+
+initLanding();
+
+/* PWA/actualizaciones modularizadas en app-pwa.js. */

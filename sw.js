@@ -1,14 +1,15 @@
-// Service Worker de La Polla TICO — V25H4.1.
+// Service Worker de La Polla TICO — V25H4.2.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h41';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h41';
+const SHELL_CACHE = 'polla-tico-shell-v25h42';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h42';
 
 const SHELL_FILES = [
   './',
   './index.html',
   './app-core.js',
+  './app-main.js',
   './app-pwa.js',
   './styles.css',
   './manifest.json',
@@ -36,7 +37,7 @@ self.addEventListener('install', (event) => {
   // V25B1.1: NO skipWaiting automático. Esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H4.1';
+const SW_VERSION = 'V25H4.2';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){

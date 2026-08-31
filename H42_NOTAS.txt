@@ -1,0 +1,40 @@
+LaPollaTICO V25H4.2 — cierre de temporada + revisión de rendimiento
+
+CAMBIOS FUNCIONALES AUTORIZADOS
+1. "Vaciar temporada" ahora es "Limpiar temporada cerrada".
+2. Solo funciona si TODAS las Pollas finalizadas de esa temporada están compactadas/protegidas.
+3. Conserva la fila mínima de cada Polla, snapshots, respaldos, jugadores, PIN/recovery, ganadores, temporadas y auditoría.
+4. Solo elimina residuos operativos anómalos: partidos, pronósticos, participantes y referidos.
+5. La tabla acumulada ya se reinicia al cerrar temporada; esta limpieza NO toca la nueva temporada.
+
+OPTIMIZACIONES SIN CAMBIO VISUAL
+1. El JS principal salió del index.html a app-main.js.
+2. app-core.js, app-main.js y app-pwa.js cargan con defer y en paralelo mientras se parsea el HTML.
+3. El Service Worker cachea app-main.js.
+4. getMatches evita una segunda lectura duplicada del histórico compacto.
+5. getParticipantsAdmin ejecuta en paralelo las dos lecturas independientes.
+6. Cache local de partidos por 15 s para volver rápidamente a una Polla sin otra espera de red.
+7. Mutaciones de partidos/resultado/compactación invalidan ese cache automáticamente.
+8. Índices SQL específicos para los patrones de consulta que todavía no tenían índice compuesto.
+
+ORDEN DE INSTALACIÓN EN BETA
+1) V25H42_cleanup_performance.sql
+2) polla-api-index-v25h42.ts
+3) styles.css (sin cambio visual, mismo contenido salvo paquete)
+4) app-core.js
+5) app-main.js  <-- NUEVO archivo obligatorio en GitHub
+6) app-pwa.js
+7) index.html
+8) sw.js
+
+SALUD
+Frontend / Backend / Base de datos / Service Worker = V25H4.2
+
+PRUEBAS MÍNIMAS
+A) Abrir Inicio, entrar/salir/volver a una Polla: el regreso inmediato debe sentirse más rápido.
+B) Crear/editar partido y cargar resultado: debe verse actualizado (cache invalidado).
+C) Registro, PIN, WhatsApp y palabra secreta: sin cambios.
+D) Cerrar temporada de prueba solo cuando no queden Pollas abiertas ni partidos pendientes.
+E) Limpiar temporada: si hay una Polla no compactada, DEBE bloquear; si todas están protegidas, conserva las Pollas/históricos y limpia solo residuos.
+F) Salud 4/4 V25H4.2.
+G) H1 25x3 opcional de regresión: la meta sigue siendo 0 errores; esta versión busca sobre todo mejorar sensación de arranque/navegación.
