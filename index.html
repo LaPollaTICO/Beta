@@ -18,10 +18,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=V25H4.3">
-<script src="./app-core.js?v=V25H4.3" defer></script>
-<script src="./app-main.js?v=V25H4.3" defer></script>
-<script src="./app-pwa.js?v=V25H4.3" defer></script>
+<link rel="stylesheet" href="./styles.css?v=V25H4.5">
+<script src="./app-core.js?v=V25H4.5" defer></script>
+<script src="./app-main.js?v=V25H4.5" defer></script>
+<script src="./app-pwa.js?v=V25H4.5" defer></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -136,8 +136,8 @@
     <div id="playerAccessError" class="name-status err" style="margin-bottom:10px;"></div>
 
     <div id="accessPinBlock" class="hidden">
-      <label>Tu PIN de 4 dígitos</label>
-      <input id="accessPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
+      <label>Tu PIN</label>
+      <input id="accessPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitExistingLogin()">Entrar</button>
       <button class="btn-secondary" onclick="openRecoveryMode()">Olvidé mi PIN</button>
       <button class="btn-secondary" onclick="chooseOtherPerson()">Soy otra persona</button>
@@ -146,14 +146,14 @@
     <div id="accessActivationBlock" class="hidden">
       <label>Código brindado por Manolo</label>
       <input id="activationCodeInput" autocomplete="off" placeholder="TICO-XXXX">
-      <label>Crea tu PIN de 4 dígitos</label>
-      <input id="activationPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
+      <label>Crea tu PIN de 5 dígitos</label>
+      <input id="activationPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitActivation()">Activar y entrar</button>
     </div>
 
     <div id="accessRegisterBlock" class="hidden">
       <label>Nombre</label><input id="registerNameInput" autocomplete="off">
-      <label>Crea tu PIN de 4 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
+      <label>Crea tu PIN de 5 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
       <div id="registerReferralWrap"><label>Código de invitación (opcional)</label><input id="registerReferralInput" autocomplete="off" placeholder="TICOXXXX"></div>
       <label>WhatsApp / teléfono (opcional)</label>
       <input id="registerWhatsappInput" type="tel" inputmode="tel" autocomplete="tel" placeholder="+51 999 999 999">
@@ -163,7 +163,7 @@
 
     <div id="accessRecoveryBlock" class="hidden">
       <label>Respuesta de seguridad</label><input id="recoveryAnswerInput" autocomplete="off">
-      <label>Nuevo PIN de 4 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="4" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="••••" style="-webkit-text-security:disc">
+      <label>Nuevo PIN de 5 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
       <button class="btn-primary" onclick="submitRecoveryFromModal()">Restablecer PIN</button>
       <button class="btn-secondary" onclick="showAccessMode('PIN')">Volver</button>
     </div>
@@ -208,7 +208,7 @@
     <input id="recoveryCurrentPinInput"
            type="text"
            inputmode="numeric"
-           maxlength="4"
+           maxlength="5"
            autocomplete="off"
            autocapitalize="off"
            spellcheck="false"
@@ -752,7 +752,7 @@
       </div>
 
       <h3>🔐 Sobre tu PIN</h3>
-      <p>Tu PIN de 4 dígitos identifica tu cuenta en todas las Pollas en las que uses el mismo nombre. Si te registras por tu cuenta, lo creas durante el registro. Si Manolo te agregó previamente, primero tendrás que introducir el <b>código de activación</b> que él te entregue y luego crearás tu PIN. Ese código sirve una sola vez. El PIN es personal e intransferible: no lo compartas.</p>
+      <p>Tu PIN identifica tu cuenta en todas las Pollas en las que uses el mismo nombre. Si te registras por tu cuenta, lo creas durante el registro. Si Manolo te agregó previamente, primero tendrás que introducir el <b>código de activación</b> que él te entregue y luego crearás tu PIN de 5 dígitos. Ese código sirve una sola vez. El PIN es personal e intransferible: no lo compartas.</p>
       <p>Si olvidas tu PIN, puedes usar tu <b>respuesta secreta</b> si la configuraste. También puedes pedirle a Manolo que lo restablezca; en ese caso recibirás un código temporal para crear un PIN nuevo sin perder puntos, pronósticos ni historial.</p>
       <p>Equivocarte de PIN no bloquea globalmente tu cuenta. Si el nombre ya pertenece a otra persona, la app te permitirá indicar que eres otra persona y tendrás que usar un nombre o apodo distinto.</p>
       <p>El número de WhatsApp es <b>opcional</b>. Si decides registrarlo, se usará únicamente para comunicaciones relacionadas con LaPollaTICO (por ejemplo pagos, soporte, avisos o premios) y solo será visible para el administrador. Puedes actualizarlo o eliminarlo desde el pequeño botón 📱 de tu perfil.</p>

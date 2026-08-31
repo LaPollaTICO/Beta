@@ -1,0 +1,50 @@
+LaPollaTICO V25H4.5 — PIN DE 5 DÍGITOS
+
+POLÍTICA
+- Cuenta nueva: exactamente 5 dígitos.
+- Activación mediante código: PIN nuevo de exactamente 5 dígitos.
+- Recuperación de PIN: PIN nuevo de exactamente 5 dígitos.
+- Usuarios Beta que YA tienen PIN de 4 dígitos: pueden seguir entrando.
+- Al restablecer/cambiar su PIN, pasan obligatoriamente a 5 dígitos.
+- Producción limpia nace directamente con PIN de 5 dígitos.
+
+POR QUÉ NO "CONVERTIMOS" LOS PIN BETA
+Los PIN se almacenan como hashes HMAC, no en texto plano. No existe ni debe existir
+una forma de recuperar un PIN actual para añadirle un dígito automáticamente.
+
+SEGURIDAD
+4 dígitos = 10.000 combinaciones.
+5 dígitos = 100.000 combinaciones.
+El espacio de búsqueda aumenta 10x. Se mantienen rate limits, HMAC y recovery.
+
+NO CAMBIA
+- Diseño general
+- Funciones de Pollas/pronósticos
+- WhatsApp
+- Palabra secreta
+- Admin
+- Backups/compactación
+- Rendimiento H4.4
+
+INSTALACIÓN BETA
+NO instales H4.4 antes. H4.5 YA INCLUYE H4.4.
+1) V25H45_pin5.sql
+2) polla-api-index-v25h45.ts
+3) app-core.js
+4) app-main.js
+5) app-pwa.js
+6) styles.css
+7) index.html
+8) sw.js
+
+SALUD
+Frontend / Backend / DB / Service Worker = V25H4.5
+
+PRUEBAS
+1) Usuario Beta antiguo con PIN 4 dígitos entra normalmente.
+2) Registro nuevo con 4 dígitos debe ser rechazado.
+3) Registro nuevo con 5 dígitos debe funcionar.
+4) Activación con código + PIN de 5 debe funcionar.
+5) Recuperación debe obligar PIN nuevo de 5.
+6) Pronosticar con usuario Beta de PIN 4 sigue funcionando.
+7) Usuario nuevo de PIN 5 puede pronosticar normalmente.

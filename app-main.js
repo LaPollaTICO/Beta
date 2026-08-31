@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4.3';
+const APP_VERSION = 'V25H4.4';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -128,7 +128,7 @@ let yearlyStandingsCache = {data:null, at:0};
 const CACHE_TTL_PARTICIPANTS_MS = 30000;
 const CACHE_TTL_STANDINGS_MS = 30000;
 const CACHE_TTL_YEARLY_MS = 60000;
-const CACHE_TTL_MATCHES_MS = 15000;
+const CACHE_TTL_MATCHES_MS = 30000;
 const matchesCacheByPolla_ = new Map();
 function invalidateMatchesCache_(pollaId){
   const id = String(pollaId || currentPolla?.id || '');
@@ -1423,11 +1423,27 @@ async function saveAppConfig_(){
 /* ============ LANDING ============ */
 async function initLanding(){
   renderAppModeBanner_();
-  void refreshAppConfig_(true);
   const container = document.getElementById('pollasContainer');
   container.innerHTML = '<div class="loading-msg">Cargando...</div>';
   try{
-    const loaded = await apiGet('getPollas', {scope:'landing'});
+    let loaded = null;
+    try{
+      const boot = await apiGet('getLandingBootstrap', {}, 2, false, true);
+      if(boot?.ok && Array.isArray(boot.pollas)){
+        loaded = boot.pollas;
+        if(boot.config) applyAppConfig_(boot.config);
+      }
+    }catch(_){}
+
+    if(!Array.isArray(loaded)){
+      const [pollasFallback,cfgFallback] = await Promise.all([
+        apiGet('getPollas', {scope:'landing'}),
+        apiGetSilent('getAppConfig').catch(()=>null)
+      ]);
+      loaded = pollasFallback;
+      if(cfgFallback?.ok !== false && cfgFallback) applyAppConfig_(cfgFallback);
+    }
+
     if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'Respuesta inválida del servidor');
     allPollas = loaded;
     allPollasLoadedAt_ = Date.now();
@@ -1439,7 +1455,6 @@ async function initLanding(){
     if(landingTimer) clearInterval(landingTimer);
     landingTimer = setInterval(updateLandingCountdowns, 30000);
 
-    // Si la URL recuerda una Polla (por refresh o enlace compartido), volver a ella.
     if(incomingPollaId){
       const requestedId = incomingPollaId;
       const target = allPollas.find(p => String(p.id) === String(requestedId));
@@ -1447,7 +1462,6 @@ async function initLanding(){
         incomingPollaId = '';
         await enterPolla(target.id, true);
       } else {
-        // La Polla ya no existe / no está disponible: volvemos a portada sin romper la app.
         incomingPollaId = '';
         history.replaceState(null, '', location.pathname);
         document.getElementById('landingScreen').classList.remove('hidden');
@@ -1475,19 +1489,43 @@ function updateLandingCountdowns(){
     el.classList.toggle('soon', sl.soon);
   });
 }
+function connectionProfile_(){
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+  const effectiveType = String(c?.effectiveType || '').toLowerCase();
+  const saveData = !!c?.saveData;
+  const rtt = Number(c?.rtt || 0);
+  const downlink = Number(c?.downlink || 0);
+  const deviceMemory = Number(navigator.deviceMemory || 0);
+  const cores = Number(navigator.hardwareConcurrency || 0);
+  const constrained =
+    saveData ||
+    ['slow-2g','2g','3g'].includes(effectiveType) ||
+    (rtt > 0 && rtt >= 350) ||
+    (downlink > 0 && downlink < 1.5) ||
+    (deviceMemory > 0 && deviceMemory <= 2) ||
+    (cores > 0 && cores <= 2);
+  return {effectiveType,saveData,rtt,downlink,deviceMemory,cores,constrained};
+}
+
 function prefetchActivePollaMatches_(){
-  const active=(allPollas||[]).filter(p=>p.status==='actual' && Number(p.matchCount||0)>0).slice(0,2);
+  const active=(allPollas||[]).filter(p=>p.status==='actual' && Number(p.matchCount||0)>0).slice(0,1);
   if(!active.length) return;
-  const run=()=>active.forEach(p=>{
-    const key=String(p.id||'');
-    const cached=matchesCacheByPolla_.get(key);
-    if(cached && (Date.now()-Number(cached.at||0))<CACHE_TTL_MATCHES_MS) return;
-    apiGet('getMatches',{pollaId:p.id},0,true,true).then(rows=>{
-      if(Array.isArray(rows)) matchesCacheByPolla_.set(key,{data:rows,at:Date.now()});
-    }).catch(()=>{});
-  });
-  if('requestIdleCallback' in window) requestIdleCallback(run,{timeout:1200});
-  else setTimeout(run,500);
+  const profile=connectionProfile_();
+  if(profile.constrained) return;
+
+  const run=async()=>{
+    for(const p of active){
+      const key=String(p.id||'');
+      const cached=matchesCacheByPolla_.get(key);
+      if(cached && (Date.now()-Number(cached.at||0))<CACHE_TTL_MATCHES_MS) continue;
+      try{
+        const rows=await apiGet('getMatches',{pollaId:p.id},0,true,true);
+        if(Array.isArray(rows)) matchesCacheByPolla_.set(key,{data:rows,at:Date.now()});
+      }catch(_){}
+    }
+  };
+  if('requestIdleCallback' in window) requestIdleCallback(()=>void run(),{timeout:2500});
+  else setTimeout(()=>void run(),1800);
 }
 function renderLanding(){
   const container = document.getElementById('pollasContainer');
@@ -3691,10 +3729,13 @@ function renderOperationalHealth_(ctx={}){
     if(!ctx.swOk) alerts.push('El Service Worker está desactualizado. Espera el aviso de actualización o recarga la app.');
     if(!ctx.dbOk) alerts.push('La base de datos no coincide o no respondió. Revisa el SQL de esta versión.');
   }
+  const latest=samples[samples.length-1] || null;
   if(apiMed>3000) alerts.push(`La API está muy lenta de forma sostenida (mediana ${apiMed} ms). Repite la prueba con buena conexión.`);
   else if(apiMed>1500) alerts.push(`La API está algo lenta (mediana ${apiMed} ms), aunque la app puede seguir operando.`);
+  else if(latest && latest.apiMs>2200) alerts.push(`La última revisión de API fue lenta (${latest.apiMs} ms), aunque la mediana reciente todavía es aceptable.`);
   if(dbMed>1800) alerts.push(`La base está muy lenta (mediana ${dbMed} ms). Conviene revisar Supabase si persiste.`);
   else if(dbMed>800) alerts.push(`La base está algo lenta (mediana ${dbMed} ms).`);
+  else if(latest && latest.dbMs>1000) alerts.push(`La última consulta de base fue lenta (${latest.dbMs} ms).`);
   if(recentTechnicalIssues_.length>=2) alerts.push(`Hubo ${recentTechnicalIssues_.length} fallos técnicos recientes en esta sesión. Usa sus códigos TICO si necesitas investigarlos.`);
   else if(recentTechnicalIssues_.length===1) alerts.push('Hubo 1 fallo técnico reciente en esta sesión. Si no se repite, puede haber sido puntual.');
 
@@ -3741,6 +3782,7 @@ async function copySystemDiagnosis_(){
     `Base de datos: ${snap.dbVersion || 'Sin revisar'}`,
     `API: ${snap.apiMs != null ? snap.apiMs+' ms' : 'Sin revisar'}`,
     `DB: ${snap.dbMs != null ? snap.dbMs+' ms' : 'Sin revisar'}`,
+    `Región Edge: ${snap.edgeRegion || 'Sin revisar'}`,
     `Mediana reciente API/DB: ${samples.length ? `${apiMed} / ${dbMed} ms` : 'Sin muestras'}`,
     `Última petición: ${lastApiRequestId_ || 'Ninguna'}`,
     `Último error técnico: ${lastTechnicalIssue_?.requestId || 'Ninguno'}`,
@@ -3818,6 +3860,7 @@ async function refreshSystemHealth_(){
       healthCard_('Respuesta API',`${edgeMs} ms`,apiClass.text,apiClass.good)+
       healthCard_('Consulta DB',`${dbMs} ms`,dbClass.text,dbClass.good)+
       healthCard_('Procesamiento servidor',`${serverMs} ms`,'Dentro de la Edge Function',serverMs<1200)+
+      healthCard_('Región Edge',String(result.edgeRegion || '—'),'Ubicación de ejecución',true)+
       healthCard_('Base de datos',result.dbOk?'Conectada':'Error',result.dbOk?'Lectura correcta':'No respondió',!!result.dbOk)+
       healthCard_('Servidor',result.serverTime ? new Date(result.serverTime).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—','Hora reportada',!!result.serverTime)+
       healthCard_('Última petición',lastApiRequestId_ || '—','Código de diagnóstico',true)+
@@ -4896,7 +4939,7 @@ async function loadAdminLog(){
   const box = document.getElementById('adminLogList');
   box.innerHTML = '<p class="hint">Cargando...</p>';
   const result = await apiPost({action:'getAdminLog', pin: adminPin, adminName: adminName});
-  if(!Array.isArray(result)){ box.innerHTML = `<p class="hint">${result.error || 'No se pudo cargar el historial.'}</p>`; return; }
+  if(!Array.isArray(result)){ box.innerHTML = `<p class="hint">${escapeHtml(result?.error || 'No se pudo cargar el historial.')}</p>`; return; }
   if(result.length === 0){ box.innerHTML = '<p class="hint">Todavía no hay cambios registrados.</p>'; return; }
   box.innerHTML = result.map(r => `
     <div class="list-item">

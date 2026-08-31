@@ -1,4 +1,4 @@
-// LaPollaTICO — núcleo liviano de ciclo de vida (V25H4.3)
+// LaPollaTICO — núcleo liviano de ciclo de vida (V25H4.5)
 // Mantiene en un solo lugar las reglas visuales del estado de una Polla.
 (function(global){
   'use strict';
@@ -15,5 +15,5 @@
     }
     return {key:'ACTIVE', compacted:false, finished:false, canPlayerLogin:true, existingOnly:false, canRegister:true, canWrite:true};
   }
-  global.TicoCore = Object.freeze({ version:'V25H4.3', classifyPolla });
+  global.TicoCore = Object.freeze({ version:'V25H4.5', classifyPolla });
 })(window);
