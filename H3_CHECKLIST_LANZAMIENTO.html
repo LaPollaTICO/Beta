@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>LaPollaTICO · H3</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1620;color:#f5f7fb;margin:0;padding:24px}
+  .wrap{max-width:920px;margin:auto}.card{background:#151e29;border:1px solid #384452;border-radius:18px;padding:22px;margin:16px 0}
+  h1,h2{margin-top:0}.muted{color:#c9d4e2}.row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #2b3642}.row:last-child{border-bottom:0}
+  input[type=checkbox]{width:22px;height:22px;margin-top:1px}.ok{font-weight:800;color:#55e49a}.warn{font-weight:800;color:#ffcc66}
+  button{background:#ffd052;color:#141414;border:1px solid #fff;border-radius:12px;font-weight:800;padding:12px 16px;cursor:pointer}
+  #status{font-size:1.15rem;font-weight:900;margin-top:12px}
+</style>
+</head>
+<body><div class="wrap">
+<div class="card"><h1>LaPollaTICO · H3</h1><p class="muted">Prueba final manual de dispositivos, PWA, offline y ciclo completo. No modifica el backend por sí sola; solo sirve como checklist.</p></div>
+<div class="card"><h2>1. Dos dispositivos / sesiones</h2>
+<label class="row"><input type="checkbox"><span>PC y celular abren la misma Polla activa correctamente.</span></label>
+<label class="row"><input type="checkbox"><span>El mismo jugador puede iniciar sesión en ambos con nombre + PIN.</span></label>
+<label class="row"><input type="checkbox"><span>Tras guardar/cambiar un pronóstico en un dispositivo, al refrescar el otro ve el mismo dato.</span></label>
+<label class="row"><input type="checkbox"><span>No aparecen duplicados ni estados contradictorios.</span></label>
+</div>
+<div class="card"><h2>2. Offline → online</h2>
+<label class="row"><input type="checkbox"><span>Con la app ya cargada, al perder internet la interfaz principal sigue abriendo.</span></label>
+<label class="row"><input type="checkbox"><span>La app muestra un estado offline comprensible y no se queda congelada.</span></label>
+<label class="row"><input type="checkbox"><span>Los cambios locales/drafts no desaparecen al estar offline.</span></label>
+<label class="row"><input type="checkbox"><span>Al recuperar internet, la app vuelve a operar sin tener que reinstalarla.</span></label>
+</div>
+<div class="card"><h2>3. PWA / actualización</h2>
+<label class="row"><input type="checkbox"><span>Cerrar completamente la PWA y abrirla otra vez funciona.</span></label>
+<label class="row"><input type="checkbox"><span>Una actualización disponible no queda pegada en “Actualizando…”.</span></label>
+<label class="row"><input type="checkbox"><span>Después de actualizar, app-core.js y app-pwa.js cargan normalmente.</span></label>
+</div>
+<div class="card"><h2>4. Ciclo de vida completo</h2>
+<label class="row"><input type="checkbox"><span>Activa: jugador puede entrar y pronosticar.</span></label>
+<label class="row"><input type="checkbox"><span>Finalizada no compactada: participante existente puede entrar solo a revisar; un jugador nuevo no puede inscribirse.</span></label>
+<label class="row"><input type="checkbox"><span>Compactada: abre como histórico sin login de jugador.</span></label>
+<label class="row"><input type="checkbox"><span>Tabla histórica, Ganadores y Tabla del año siguen coherentes.</span></label>
+</div>
+<div class="card"><h2>5. Admin / seguridad</h2>
+<label class="row"><input type="checkbox"><span>Admin abre y mantiene sesión según lo esperado.</span></label>
+<label class="row"><input type="checkbox"><span>Acciones destructivas siguen pidiendo confirmación/clave extra.</span></label>
+<label class="row"><input type="checkbox"><span>Gestión histórica de jugadores sigue mostrando “Gestionar”.</span></label>
+<label class="row"><input type="checkbox"><span>Respaldo, compactación, limpieza y auditoría siguen abriendo.</span></label>
+</div>
+<div class="card"><button onclick="verificar()">Verificar checklist</button><div id="status"></div></div>
+</div>
+<script>
+function verificar(){const boxes=[...document.querySelectorAll('input[type=checkbox]')];const ok=boxes.filter(x=>x.checked).length;const el=document.getElementById('status');if(ok===boxes.length){el.className='ok';el.textContent=`APROBADO · ${ok}/${boxes.length}`;}else{el.className='warn';el.textContent=`PENDIENTE · ${ok}/${boxes.length}`;}}
+</script></body></html>
