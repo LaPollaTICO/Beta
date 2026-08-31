@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V25H4.5.
+// Service Worker de La Polla TICO — V25H4.5 hotfix de caché/frontend.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h45';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h45';
+const SHELL_CACHE = 'polla-tico-shell-v25h45-fix1';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h45-fix1';
 
 const SHELL_FILES = [
   './',

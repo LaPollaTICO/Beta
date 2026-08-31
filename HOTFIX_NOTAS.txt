@@ -1,0 +1,17 @@
+V25H4.5 HOTFIX
+Causa: el app-main.js entregado en el paquete H4.5 conservó por error
+APP_VERSION='V25H4.4'. Backend, DB y Service Worker sí estaban correctamente en H4.5.
+
+Este hotfix NO cambia lógica, SQL ni backend.
+Solo:
+- corrige APP_VERSION a V25H4.5;
+- fuerza una URL nueva para app-main.js;
+- fuerza una nueva generación de caché del Service Worker manteniendo SW_VERSION V25H4.5.
+
+Subir en este orden:
+1) app-main.js
+2) index.html
+3) sw.js
+
+Después pulsa Actualizar cuando aparezca el aviso o cierra/abre la PWA.
+Salud debe quedar V25H4.5 en las cuatro capas.
