@@ -1,0 +1,54 @@
+LaPollaTICO V25H4.6 — RELEASE CANDIDATE
+
+HALLAZGOS CORREGIDOS
+1) CRÍTICO PIN: H4.5 mostraba 5 dígitos, pero app-main todavía validaba 4 en varios flujos.
+   H4.6: login Beta=4/5; registro/activación/recuperación nuevos=5; PIN actual=4/5.
+2) CRÍTICO INTEGRIDAD: una Polla compactada podía conservar Desarchivar/Eliminar.
+   Un intento de borrar podía tocar puntos/títulos antes de que la FK rechazara el borrado.
+   H4.6 bloquea edición, desarchivo, reapertura, cambio de premios y borrado ANTES de efectos.
+3) Login jugador: participación + IDs de partidos ahora se consultan en paralelo.
+4) Standings: la Polla operativa usa primero la RPC y evita consulta histórica extra.
+5) Admin partidos: conteos de pronósticos pasan de N COUNTs a una RPC GROUP BY.
+6) Códigos de activación: descifrado de pendientes en paralelo.
+7) PWA: assets con ?v= pueden reutilizar cache local (ignoreSearch), más robusto offline.
+8) Errores de tablas ya no se presentan como una tabla vacía.
+
+AUDITORÍA ESTÁTICA
+- Versiones alineadas.
+- JS syntax check.
+- TypeScript: parsing válido; fuera de Supabase solo faltan Deno/imports npm.
+- Acciones frontend/backend comparadas.
+- Sets de acciones Admin comparados.
+- IDs HTML duplicados: ninguno.
+- Labels rotos: ninguno.
+- PIN/activación/recuperación revisados.
+- Privacidad: WhatsApp no sale por ruta pública; PIN no va a localStorage.
+- Pronósticos individuales públicos solo tras cierre/resultado.
+- Lifecycle activa/finalizada/compactada revisado.
+- Temporadas/limpieza/compactación revisadas.
+- PWA/caché/update/offline revisados.
+
+INSTALACIÓN BETA
+1) V25H46_release_candidate.sql
+2) polla-api-index-v25h46.ts
+3) app-core.js
+4) app-main.js
+5) app-pwa.js
+6) styles.css
+7) index.html
+8) sw.js
+
+PRUEBA DE CIERRE
+A Salud V25H4.6 x4.
+B PIN viejo 4 entra.
+C Registro PIN 4 rechazado y PIN 5 aceptado.
+D Activación + recuperación producen PIN 5.
+E Polla compactada: sin Desarchivar/Eliminar y backend bloquea cambios.
+F Crear/editar Polla y partido.
+G Guardar pronóstico.
+H Tabla Polla + Tabla Acumulada.
+I Gestión códigos activación.
+J Offline/online + update PWA.
+K H1 25x3 + H2 para certificación final.
+
+Si A-K pasan: freeze Beta y montaje de Producción limpia.

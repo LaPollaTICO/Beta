@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4.5';
+const APP_VERSION = 'V25H4.6';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1997,7 +1997,7 @@ async function finishPlayerAccessWithoutJump_(runner){
 
 async function submitExistingLogin(){
   const pin=document.getElementById('accessPinInput').value.trim();
-  if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
+  if(!/^\d{4,5}$/.test(pin)){accessError('El PIN debe tener 4 o 5 números.');return;}
   const result=await apiPost({action:'authName',pollaId:currentPolla.id,name:pendingAccessName,pin});
   if(!result.ok){
     if(result.error==='WRONG_PIN'){ accessError('PIN incorrecto. Puedes reintentarlo, recuperar tu PIN o indicar que eres otra persona.'); return; }
@@ -2016,7 +2016,7 @@ async function submitActivation(){
   const code=document.getElementById('activationCodeInput').value.trim();
   const pin=document.getElementById('activationPinInput').value.trim();
   if(!code){accessError('Ingresa el código que te brindó Manolo.');return;}
-  if(!/^\d{4}$/.test(pin)){accessError('Tu nuevo PIN debe tener 4 números.');return;}
+  if(!/^\d{5}$/.test(pin)){accessError('Tu nuevo PIN debe tener 5 números.');return;}
   const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin});
   if(!result.ok){accessError(result.error==='CODIGO_ACTIVACION_INVALIDO'?'El código de activación no es correcto.':result.error);return;}
   closeOverlay('playerAccessOverlay');
@@ -2030,7 +2030,7 @@ async function submitNewRegistration(){
   const ref=currentPolla?.isFreePolla?'':document.getElementById('registerReferralInput').value.trim().toUpperCase();
   const whatsapp=document.getElementById('registerWhatsappInput').value.trim();
   if(!name){accessError('Escribe el nombre con el que quieres participar.');return;}
-  if(!/^\d{4}$/.test(pin)){accessError('El PIN debe tener 4 números.');return;}
+  if(!/^\d{5}$/.test(pin)){accessError('El PIN debe tener 5 números.');return;}
   const whatsappDigits=whatsapp.replace(/\D/g,'');
   if(whatsapp && (whatsappDigits.length<7 || whatsappDigits.length>15)){
     accessError('Ingresa un WhatsApp/teléfono válido o déjalo vacío.');
@@ -2064,7 +2064,7 @@ function openRecoveryMode(){
 async function submitRecoveryFromModal(){
   if(playerActionBlocked_('account')) return;
   const answer=document.getElementById('recoveryAnswerInput').value.trim(); const pin=document.getElementById('recoveryPinInput').value.trim();
-  if(!answer){accessError('Escribe tu respuesta de seguridad.');return;} if(!/^\d{4}$/.test(pin)){accessError('El nuevo PIN debe tener 4 números.');return;}
+  if(!answer){accessError('Escribe tu respuesta de seguridad.');return;} if(!/^\d{5}$/.test(pin)){accessError('El nuevo PIN debe tener 5 números.');return;}
   const result=await apiPost({action:'selfResetPin',name:pendingAccessName,securityAnswer:answer,newPin:pin});
   if(!result.ok){
     if(result.error==='RECOVERY_LOCKED'){accessError(`Demasiados intentos de recuperación desde este dispositivo/origen. Intenta nuevamente en ${result.minutesLeft||5} min.`);return;}
@@ -2136,8 +2136,8 @@ async function saveRecoverySettings_(){
   const answer = String(answerInput.value || '').trim();
 
   err.textContent = '';
-  if(!/^\d{4}$/.test(typedPin)){
-    err.textContent = 'Escribe tu PIN actual de 4 dígitos.';
+  if(!/^\d{4,5}$/.test(typedPin)){
+    err.textContent = 'Escribe tu PIN actual.';
     return;
   }
   if(!answer){
@@ -2492,7 +2492,8 @@ async function getStandingsCached_(force=false, silent=false){
     return standingsCache.data;
   }
   const data = await (silent ? apiGetSilent('getStandings',{pollaId:currentPolla.id}) : apiGet('getStandings',{pollaId:currentPolla.id}));
-  standingsCache = {pollaId:currentPolla.id,data:Array.isArray(data)?data:[],at:now};
+  if(!Array.isArray(data)) throw new Error(data?.error || 'No se pudo cargar la tabla.');
+  standingsCache = {pollaId:currentPolla.id,data,at:Date.now()};
   return standingsCache.data;
 }
 async function getYearlyStandingsCached_(force=false, silent=false){
@@ -2501,7 +2502,8 @@ async function getYearlyStandingsCached_(force=false, silent=false){
     return yearlyStandingsCache.data;
   }
   const data = await (silent ? apiGetSilent('getYearlyStandings') : apiGet('getYearlyStandings'));
-  yearlyStandingsCache = {data:Array.isArray(data)?data:[],at:now};
+  if(!Array.isArray(data)) throw new Error(data?.error || 'No se pudo cargar la tabla acumulada.');
+  yearlyStandingsCache = {data,at:Date.now()};
   return yearlyStandingsCache.data;
 }
 
@@ -3470,9 +3472,10 @@ function renderPollasAdminList(){
           <button class="icon-btn" title="Marcar como activa" onclick="setPollaStatus('${p.id}','actual')">✅</button>
           <button class="icon-btn" title="Marcar próximamente" onclick="setPollaStatus('${p.id}','proximamente')">⏳</button>
           <button class="icon-btn" title="Finalizar" onclick="setPollaStatus('${p.id}','finalizada')">🏁</button>` : ''}
-          ${(p.status === 'finalizada' && !p.isArchived) ? `<button class="icon-btn" title="Reabrir para corregir" onclick="reopenPollaAction('${p.id}')">🔓 Reabrir</button><button class="icon-btn" title="Archivar" onclick="archivePollaAction('${p.id}')">🗄️</button>` : ''}
-          ${p.isArchived ? `<button class="icon-btn" title="Desarchivar para revisión (seguirá finalizada)" onclick="desarchivarPollaAction('${p.id}')">📤</button>` : ''}
-          <button class="icon-btn" title="Eliminar" onclick="deletePolla('${p.id}')">🗑️</button>
+          ${p.compactedAt ? `<span class="status-tag archived-tag" title="Histórico compacto protegido">🛡️ Protegida</span>` : ''}
+          ${(!p.compactedAt && p.status === 'finalizada' && !p.isArchived) ? `<button class="icon-btn" title="Reabrir para corregir" onclick="reopenPollaAction('${p.id}')">🔓 Reabrir</button><button class="icon-btn" title="Archivar" onclick="archivePollaAction('${p.id}')">🗄️</button>` : ''}
+          ${(!p.compactedAt && p.isArchived) ? `<button class="icon-btn" title="Desarchivar para revisión (seguirá finalizada)" onclick="desarchivarPollaAction('${p.id}')">📤</button>` : ''}
+          ${p.compactedAt ? '' : `<button class="icon-btn" title="Eliminar" onclick="deletePolla('${p.id}')">🗑️</button>`}
         </div>
       </div>
       ${(p.isArchived || p.status === 'finalizada') ? '' : `
@@ -3552,6 +3555,11 @@ async function setPollaStatus(id,status){
   allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);renderPollasAdminList();renderLanding();
 }
 async function deletePolla(id){
+  const protectedPolla=allPollas.find(p=>String(p.id)===String(id));
+  if(protectedPolla?.compactedAt){
+    alert('🛡️ Esta Polla ya está compactada y protegida. Su cabecera histórica no se puede eliminar.');
+    return;
+  }
   if(!confirm('⚠️ Esto borra la Polla PERMANENTEMENTE, junto con todos sus partidos, pronósticos y participantes. No se puede deshacer.\n\n¿Seguro que quieres continuar?')) return;
   await withSensitiveAdminConfirmation_('deletePolla','Confirma tu clave para eliminar esta Polla permanentemente.', async()=>{
     const params = {action:'deletePolla', id, pin: adminPin, adminName: adminName};
@@ -4100,7 +4108,7 @@ function openParticipantWhatsapp(name, whatsapp){
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`,'_blank');
 }
 function activationMessage(name,code){
-  return `Hola ${name} 👋\nManolo ya te agregó a la Polla TICO #${currentPolla?.number||''}.\n\nTu código de activación es: ${code}\n\nEntra a la app, escribe tu nombre, coloca este código y crea tu PIN de 4 dígitos.`;
+  return `Hola ${name} 👋\nManolo ya te agregó a la Polla TICO #${currentPolla?.number||''}.\n\nTu código de activación es: ${code}\n\nEntra a la app, escribe tu nombre, coloca este código y crea tu PIN de 5 dígitos.`;
 }
 async function copyTextSafe(text){ try{await navigator.clipboard.writeText(text);return true;}catch(_){return false;} }
 function showActivationCodes(codes){
@@ -5202,8 +5210,13 @@ async function openStandings(){
   openOverlay('standingsOverlay');
   document.getElementById('standingsTable').innerHTML = '<tr><td>Cargando...</td></tr>';
   try{
-    const standings = await getStandingsCached_().catch(()=>[]);
-    renderStandingsTable(document.getElementById('standingsTable'), standings, 'polla_'+currentPolla.id);
+    const table=document.getElementById('standingsTable');
+    try{
+      const standings = await getStandingsCached_();
+      renderStandingsTable(table, standings, 'polla_'+currentPolla.id);
+    }catch(_){
+      table.innerHTML='<tr><td>📡 No se pudo cargar la tabla. Revisa tu conexión e inténtalo nuevamente.</td></tr>';
+    }
   } finally { busyFlags.standings = false; }
 }
 async function openYearlyStandings(){
@@ -5212,8 +5225,13 @@ async function openYearlyStandings(){
   openOverlay('yearlyOverlay');
   document.getElementById('yearlyTable').innerHTML = '<tr><td>Cargando...</td></tr>';
   try{
-    const standings = await getYearlyStandingsCached_().catch(()=>[]);
-    renderStandingsTable(document.getElementById('yearlyTable'), standings, 'yearly', true);
+    const table=document.getElementById('yearlyTable');
+    try{
+      const standings = await getYearlyStandingsCached_();
+      renderStandingsTable(table, standings, 'yearly', true);
+    }catch(_){
+      table.innerHTML='<tr><td>📡 No se pudo cargar la tabla acumulada. Revisa tu conexión e inténtalo nuevamente.</td></tr>';
+    }
   } finally { busyFlags.yearly = false; }
 }
 
