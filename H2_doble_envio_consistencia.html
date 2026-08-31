@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LaPollaTICO · H2</title>
+<style>
+:root{--bg:#0d131a;--card:#151c25;--line:#34404d;--txt:#f7f2e8;--mut:#b9c2cf;--ok:#50df89;--warn:#f2c14e;--bad:#ff656d}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font:16px system-ui,Segoe UI,Arial;padding:18px} .wrap{max-width:900px;margin:auto} .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;margin:16px 0} h1,h2{margin:0 0 12px} p{color:var(--mut);line-height:1.5} label{display:block;margin:12px 0 5px;color:var(--mut)} input,select,button{font:inherit;border-radius:12px;border:1px solid #788391;background:#0f151d;color:var(--txt);padding:11px 13px} input,select{width:100%} button{cursor:pointer;font-weight:800;margin-top:14px} button:disabled{opacity:.45;cursor:not-allowed} .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} .status{font-size:28px;font-weight:900} .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} pre{white-space:pre-wrap;background:#0b1016;border:1px solid var(--line);padding:14px;border-radius:14px;max-height:330px;overflow:auto} .small{font-size:13px} @media(max-width:650px){.row{grid-template-columns:1fr}}
+</style></head><body><div class="wrap">
+<div class="card"><h1>LaPollaTICO · H2</h1><p>Prueba de <b>doble envío, reintento y consistencia</b>. Solo usa un pronóstico YA existente y vuelve a enviar exactamente el mismo marcador, por lo que no debe cambiar tus puntos ni tu marcador.</p></div>
+<div class="card"><h2>1. Identidad de prueba</h2><div class="row"><div><label>Nombre</label><input id="name" autocomplete="off"></div><div><label>PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="4"></div></div><button id="loadBtn">Cargar mis pronósticos abiertos</button><div id="loadMsg" class="small"></div></div>
+<div class="card"><h2>2. Partido</h2><label>Polla activa</label><select id="polla" disabled></select><label>Pronóstico abierto ya guardado</label><select id="match" disabled></select><div id="baseline" class="small"></div><button id="runBtn" disabled>▶ Ejecutar H2</button></div>
+<div class="card"><h2>Resultado</h2><div id="verdict" class="status">Pendiente</div><p id="summary"></p><pre id="log">Esperando…</pre></div>
+</div><script>
+const API='https://iiuppczbeezwxevlnahk.supabase.co/functions/v1/polla-api'; const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpdXBwY3piZWV6d3hldmxuYWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2MjY0MjMsImV4cCI6MjEwMzIwMjQyM30.Q6M-p1IUXCw3zPGGsR-BYiRen5oQWeLMfpzuf382mS0';
+const $=id=>document.getElementById(id); let state={pollas:[], matches:[], my:{}, selectedPolla:null};
+function headers(json=false){const h={apikey:KEY,Authorization:`Bearer ${KEY}`};if(json)h['Content-Type']='application/json';return h}
+async function get(action,params={}){const q=new URLSearchParams({action,...params});const r=await fetch(`${API}?${q}`,{headers:headers()});const t=await r.text();let j;try{j=JSON.parse(t)}catch{j={error:t}};if(!r.ok)throw new Error(`HTTP ${r.status} · ${j.error||t}`);return j}
+async function post(payload,signal){const r=await fetch(API,{method:'POST',headers:headers(true),body:JSON.stringify(payload),signal});const t=await r.text();let j;try{j=JSON.parse(t)}catch{j={error:t}};if(!r.ok)throw new Error(`HTTP ${r.status} · ${j.error||t}`);return j}
+function log(s){$('log').textContent += `
+${s}`; $('log').scrollTop=$('log').scrollHeight}
+function normPollaStatus(p){return String(p.status||'').toLowerCase()}
+async function loadAll(){
+ $('loadMsg').textContent='Cargando…'; $('runBtn').disabled=true; $('polla').disabled=true; $('match').disabled=true; $('log').textContent='';
+ const name=$('name').value.trim(), pin=$('pin').value.trim(); if(!name||!/^[0-9]{4}$/.test(pin)){$('loadMsg').textContent='Ingresa nombre y PIN de 4 dígitos.';return}
+ try{
+  const pollas=await get('getPollas'); state.pollas=(Array.isArray(pollas)?pollas:[]).filter(p=>!p.compactedAt && !p.isArchived && normPollaStatus(p)!=='finalizada');
+  if(!state.pollas.length) throw new Error('No hay Pollas activas disponibles.');
+  $('polla').innerHTML=state.pollas.map(p=>`<option value="${p.id}">Polla #${p.number}</option>`).join(''); $('polla').disabled=false;
+  await loadPolla(name,pin); $('loadMsg').textContent='✓ Identidad verificada y datos cargados.';
+ }catch(e){$('loadMsg').textContent='Error: '+e.message}
+}
+async function loadPolla(name=$('name').value.trim(),pin=$('pin').value.trim()){
+ const pollaId=$('polla').value; state.selectedPolla=pollaId; const [matches,mine,status]=await Promise.all([get('getMatches',{pollaId}),get('getMyPredictions',{pollaId,name,pin}),get('getMyParticipantStatus',{pollaId,name,pin})]);
+ if(!status.ok) throw new Error('No eres participante válido de esta Polla o el PIN no coincide.');
+ state.matches=Array.isArray(matches)?matches:[]; state.my=mine.predictions||{}; const now=Date.now();
+ const eligible=state.matches.filter(m=>!m.isCanceled&&!m.resultSubmitted&&(!m.closeAt||new Date(m.closeAt).getTime()>now)&&state.my[m.id]);
+ $('match').innerHTML=eligible.map(m=>`<option value="${m.id}">#${m.matchNumber} ${m.home} vs ${m.away} · guardado ${state.my[m.id].home}-${state.my[m.id].away}</option>`).join('');
+ $('match').disabled=!eligible.length; $('runBtn').disabled=!eligible.length; if(!eligible.length) $('baseline').textContent='No tienes un pronóstico ya guardado en un partido todavía abierto. H2 no hará una predicción nueva.'; else updateBaseline();
+}
+function updateBaseline(){const id=$('match').value,p=state.my[id]; $('baseline').textContent=p?`Base: ${p.home}-${p.away} · edit_count=${p.editCount??0} · H2 debe dejarlo exactamente igual.`:''}
+async function refreshMine(){const mine=await get('getMyPredictions',{pollaId:state.selectedPolla,name:$('name').value.trim(),pin:$('pin').value.trim()});state.my=mine.predictions||{};return state.my[$('match').value]}
+async function runH2(){
+ const matchId=$('match').value,name=$('name').value.trim(),pin=$('pin').value.trim(); let before=state.my[matchId]; if(!before)return;
+ $('runBtn').disabled=true; $('verdict').className='status warn'; $('verdict').textContent='Probando…'; $('summary').textContent=''; $('log').textContent=`Base: ${before.home}-${before.away} · edit_count=${before.editCount??0}`;
+ const payload={action:'savePrediction',matchId,name,pin,home:Number(before.home),away:Number(before.away)};
+ try{
+  const t0=performance.now(); const burst=await Promise.all(Array.from({length:10},()=>post(payload))); log(`Doble/múltiple envío: 10/10 respuestas · ${Math.round(performance.now()-t0)} ms`);
+  const bad=burst.filter(x=>!x||x.ok!==true); if(bad.length) throw new Error(`${bad.length} respuestas funcionales fallaron.`);
+  let afterBurst=await refreshMine(); log(`Tras ráfaga: ${afterBurst.home}-${afterBurst.away} · edit_count=${afterBurst.editCount??0}`);
+  const ctrl=new AbortController(); const abandoned=post(payload,ctrl.signal).catch(e=>e); setTimeout(()=>ctrl.abort(),30); await abandoned; log('Simulación de red: una petición fue abortada desde el cliente y se reintentará.');
+  const retry=await post(payload); if(!retry.ok)throw new Error('El reintento no fue aceptado.');
+  let afterRetry=await refreshMine(); log(`Tras reintento: ${afterRetry.home}-${afterRetry.away} · edit_count=${afterRetry.editCount??0}`);
+  const scoreSame=Number(afterRetry.home)===Number(before.home)&&Number(afterRetry.away)===Number(before.away);
+  const editSame=Number(afterRetry.editCount??0)===Number(before.editCount??0);
+  if(!scoreSame)throw new Error('El marcador final cambió.');
+  if(!editSame)throw new Error(`edit_count cambió de ${before.editCount??0} a ${afterRetry.editCount??0} pese a reenviar lo mismo.`);
+  $('verdict').className='status ok'; $('verdict').textContent='APROBADO'; $('summary').textContent='10 envíos simultáneos + corte/reintento conservaron exactamente el mismo pronóstico y el mismo edit_count.'; log('✓ Idempotencia y reintento aprobados.');
+ }catch(e){$('verdict').className='status bad';$('verdict').textContent='REVISAR';$('summary').textContent=e.message;log('ERROR: '+e.message)}finally{$('runBtn').disabled=false}
+}
+$('loadBtn').onclick=loadAll; $('polla').onchange=()=>loadPolla().catch(e=>$('loadMsg').textContent='Error: '+e.message); $('match').onchange=updateBaseline; $('runBtn').onclick=runH2;
+</script></body></html>
