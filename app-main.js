@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.3';
+const APP_VERSION = 'V25H5.0.4';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -138,7 +138,12 @@ const CACHE_TTL_PARTICIPANTS_MS = 30000;
 const CACHE_TTL_STANDINGS_MS = 30000;
 const CACHE_TTL_YEARLY_MS = 60000;
 const CACHE_TTL_MATCHES_MS = 30000;
+// H5.0.4: una Polla visitada recientemente puede pintarse desde cache hasta 5 min
+// mientras se revalida en segundo plano. No aumenta llamadas frente al flujo anterior:
+// simplemente evita que el usuario tenga que esperar esa llamada para volver a verla.
+const CACHE_STALE_MATCHES_MAX_MS = 5 * 60 * 1000;
 const matchesCacheByPolla_ = new Map();
+const matchesRefreshInFlight_ = new Set();
 function invalidateMatchesCache_(pollaId){
   const id = String(pollaId || currentPolla?.id || '');
   if(id) matchesCacheByPolla_.delete(id);
@@ -1847,7 +1852,7 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   document.getElementById('playerName').value = isHistoricalReadOnlyPolla_() ? '' : lastPlayerName_();
   resetAuthUI();
   applyHistoricalReadOnlyUI_();
-  await loadMatches();
+  await loadMatches(false, true);
   if(countdownTimer) clearInterval(countdownTimer);
   countdownTimer = setInterval(updateCountdowns, 30000);
 }
@@ -2601,20 +2606,39 @@ async function ensurePredictionTrendsForGroup_(groupKey){
     .map(m=>m.id);
   return fetchPredictionTrendsForMatchIds_(ids);
 }
-async function loadMatches(force=false){
+async function refreshMatchesCacheSilently_(pollaId){
+  const id=String(pollaId||'');
+  if(!id || matchesRefreshInFlight_.has(id)) return;
+  matchesRefreshInFlight_.add(id);
+  try{
+    const fresh=await apiGetSilent('getMatches',{pollaId:id}).catch(()=>null);
+    if(!Array.isArray(fresh)) return;
+    matchesCacheByPolla_.set(id,{data:fresh,at:Date.now()});
+    // Si el usuario ya salió o abrió otra Polla, solo actualizamos el cache.
+    // Nunca dejamos que una respuesta tardía pinte datos sobre otra Polla.
+    if(String(currentPolla?.id||'')!==id) return;
+    await loadMatches(false,false); // cache recién actualizado: render sin otra llamada
+  } finally {
+    matchesRefreshInFlight_.delete(id);
+  }
+}
+
+async function loadMatches(force=false, allowStale=false){
   const box = document.getElementById('matchesContainer');
   const cacheKey = String(currentPolla?.id || '');
   const cached = cacheKey ? matchesCacheByPolla_.get(cacheKey) : null;
-  const cacheFresh = !!cached && (Date.now() - Number(cached.at || 0)) < CACHE_TTL_MATCHES_MS;
+  const cacheAge = cached ? (Date.now() - Number(cached.at || 0)) : Infinity;
+  const cacheFresh = !!cached && cacheAge < CACHE_TTL_MATCHES_MS;
+  const staleUsable = !force && !!allowStale && !!cached && Array.isArray(cached.data) && cacheAge < CACHE_STALE_MATCHES_MAX_MS;
 
-  // H4.2: al volver rápidamente a una Polla reutilizamos los partidos ya cargados.
-  // El primer acceso sigue consultando al servidor y cualquier mutación Admin invalida este cache.
-  let matchesResult = cacheFresh ? cached.data : null;
-  if(!cacheFresh) box.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
+  // H5.0.4: al reentrar a una Polla reciente pintamos primero lo último conocido.
+  // Si ya venció el TTL de 30 s, la revalidación ocurre en background y no bloquea la pantalla.
+  let matchesResult = (cacheFresh || staleUsable) ? cached.data : null;
+  if(!matchesResult) box.innerHTML = '<div class="loading-msg">Cargando partidos...</div>';
 
   // V19: un fallo de red NO se interpreta como una Polla sin partidos.
   try{
-    if(force || !cacheFresh){
+    if(force || (!cacheFresh && !staleUsable)){
       matchesResult = await apiGet('getMatches', {pollaId: currentPolla.id});
       if(!Array.isArray(matchesResult)) throw new Error(matchesResult?.error || 'Respuesta inválida del servidor');
       if(cacheKey) matchesCacheByPolla_.set(cacheKey, {data:matchesResult, at:Date.now()});
@@ -2669,6 +2693,7 @@ async function loadMatches(force=false){
 
   await renderMatches();
   void fetchPredictionTrendsForMatchIds_(visibleIds, true);
+  if(staleUsable && !cacheFresh && cacheKey) void refreshMatchesCacheSilently_(cacheKey);
   return true;
 }
 
@@ -4887,13 +4912,25 @@ async function submitResult(matchId){
         : (result.error || 'No se pudo guardar el resultado.'));
       return;
     }
+    // H5.0.4: el RPC ya confirmó la transacción atómica y el recálculo de puntos.
+    // No hacemos dos viajes extra (getMatches + conteos Admin) solo para repintar
+    // información que ya conocemos. Actualizamos el estado local y sus caches.
+    const wasCorrection=!!match.resultSubmitted;
+    match.resultSubmitted=true;
+    match.actualHome=home;
+    match.actualAway=away;
+    if(currentPolla?.id){
+      matchesCacheByPolla_.set(String(currentPolla.id),{data:matches.map(m=>({...m})),at:Date.now()});
+    }
     delete predictionsCache[matchId];
     delete adminPredictionsCache[matchId];
+    delete predictionTrendsCache[matchId];
+    predictionTrendsLoadedMatches.delete(String(matchId));
     invalidateStandingsCaches_();
-    await loadMatches(true);
-    await renderAdminMatchList(true);
+    await renderMatches();
+    await renderAdminMatchList(false);
     renderAdminOverview_();
-    showToast_(match.resultSubmitted ? '✅ Resultado corregido correctamente' : '✅ Resultado guardado correctamente');
+    showToast_(wasCorrection ? '✅ Resultado corregido correctamente' : '✅ Resultado guardado correctamente');
   } finally {
     busyFlags[busyKey]=false;
     if(btn && document.body.contains(btn)){ btn.disabled=false; btn.textContent=previousText; }
