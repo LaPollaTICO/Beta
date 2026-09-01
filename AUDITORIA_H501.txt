@@ -1,0 +1,10 @@
+LaPollaTICO V25H5.0.1 — AUDITORÍA HOTFIX
+
+✅ Mascota WebP usa nombre versionado nuevo.
+✅ PNG fallback permanece.
+✅ SW usa caches v25h501.
+✅ SW_VERSION V25H5.0.1.
+✅ Frontend APP_VERSION V25H5.0.1.
+✅ TicoCore V25H5.0.1.
+✅ Backend V25H5.0.1.
+✅ SQL solo actualiza schema_version; no cambia reglas/índices/RPC.

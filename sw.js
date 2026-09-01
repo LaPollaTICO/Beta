@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V25H5.0 hotfix de caché/frontend.
+// Service Worker de La Polla TICO — V25H5.0.1 hotfix de caché/frontend.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h50';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h50';
+const SHELL_CACHE = 'polla-tico-shell-v25h501';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h501';
 
 const ESSENTIAL_SHELL_FILES = [
   // H5: './' y './index.html' eran el mismo documento y se descargaban dos veces.
@@ -15,9 +15,11 @@ const ESSENTIAL_SHELL_FILES = [
   './manifest.json'
 ];
 const OPTIONAL_SHELL_FILES = [
+  // H5.0.1: la mascota usa nombre versionado. No reutilizar el mismo nombre
+  // cuando cambien sus bytes; así una PWA instalada nunca conserva una copia vieja.
   // Los iconos de instalación los gestiona el navegador/manifest; recachearlos
   // en cada versión del SW solo añadía ~1 MB de transferencia de fondo.
-  './mascota-gallo-peru.webp'
+  './mascota-gallo-peru-v25h501.webp'
 ];
 
 self.addEventListener('install', (event) => {
@@ -41,7 +43,7 @@ self.addEventListener('install', (event) => {
   // No skipWaiting automático: esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H5.0';
+const SW_VERSION = 'V25H5.0.1';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){

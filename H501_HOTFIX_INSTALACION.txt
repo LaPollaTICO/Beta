@@ -1,0 +1,25 @@
+LaPollaTICO V25H5.0.1 — HOTFIX DE MASCOTA / CACHÉ
+
+CAUSA CORREGIDA
+La V25H5.0 precacheaba mascota-gallo-peru.webp en el Service Worker.
+Reemplazar el archivo con el mismo nombre en GitHub no cambiaba la copia ya
+guardada en una PWA instalada. Además, el manejador de assets usa cache-first.
+
+SOLUCIÓN
+- Mascota WebP regenerada con canal alfa RGBA.
+- Nuevo nombre inmutable/versionado: mascota-gallo-peru-v25h501.webp.
+- Nuevo Service Worker/cache: V25H5.0.1 / v25h501.
+- Frontend/Core/PWA/Backend/DB sincronizados a V25H5.0.1.
+- Sin cambios de reglas de negocio.
+
+ORDEN
+1) Supabase SQL Editor: ejecutar V25H501_hotfix.sql.
+2) Edge Function: desplegar polla-api-index-v25h501.ts.
+3) GitHub Pages: reemplazar index.html, app-core.js, app-main.js, app-pwa.js, sw.js.
+4) Subir mascota-gallo-peru-v25h501.webp a la raíz.
+5) No borrar mascota-gallo-peru.png (fallback).
+6) Abrir la PWA. Debe aparecer “Nueva actualización disponible”.
+7) Pulsar Actualizar.
+8) Salud debe mostrar V25H5.0.1 en Frontend, Service Worker, Backend y Base de datos.
+
+NO hace falta volver a ejecutar limpieza de índices ni optimizaciones H5.0.
