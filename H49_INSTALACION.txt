@@ -1,0 +1,30 @@
+LaPollaTICO V25H4.9 — PAQUETE FINAL PRE-CERTIFICACIÓN
+
+Esta versión es ACUMULATIVA. Si todavía no instalaste H4.8, no la instales: pasa directamente a H4.9.
+
+ORDEN EN BETA
+1) Ejecutar V25H49_full.sql en Supabase SQL Editor.
+2) Desplegar polla-api-index-v25h49.ts como Edge Function.
+3) GitHub Pages raíz:
+   - manifest.json
+   - app-core.js
+   - app-main.js
+   - app-pwa.js
+   - styles.css
+   - index.html
+   - sw.js
+4) Verificar/actualizar assets raíz incluidos:
+   - icon-180.png
+   - icon-192.png
+   - icon-512.png
+   - icon-maskable-512.png
+   - apple-touch-icon.png
+   - favicon-32x32.png
+   - favicon-16x16.png
+   - mascota-gallo-peru.png
+5) Subir la carpeta completa /comunicados con sus 9 PNG.
+6) Abrir la PWA y aceptar la actualización cuando aparezca; si no aparece, cerrarla completamente y volver a abrir.
+7) Salud debe mostrar V25H4.9 en Frontend, Service Worker, Backend y Base de datos.
+
+NO borrar otros archivos de producción hasta confirmar que el despliegue H4.9 arrancó correctamente.
+NO congelar Producción todavía: el siguiente paso es la batería exhaustiva en Beta.

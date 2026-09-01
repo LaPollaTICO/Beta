@@ -1,0 +1,41 @@
+LaPollaTICO V25H4.9 — PAQUETE FINAL PRE-CERTIFICACIÓN
+
+✅ Sintaxis app-main.js
+✅ Sintaxis app-core.js
+✅ Sintaxis app-pwa.js
+✅ Sintaxis sw.js
+✅ HTML sin IDs duplicados
+✅ Labels HTML con destino válido
+✅ manifest.json válido
+✅ ESSENTIAL_SHELL_FILES: 6 rutas disponibles
+✅ OPTIONAL_SHELL_FILES: 8 rutas disponibles
+✅ Íconos de manifest presentes
+✅ 58 acciones frontend cubiertas por backend
+✅ Admin actions sincronizadas 44/44
+✅ onclick HTML resueltos
+✅ V25H4.9 presente en frontend/core/PWA/SW/backend/SQL
+✅ PIN visual y maxlength de 5 dígitos coherentes
+✅ PIN no persistido en Web Storage
+✅ service_role no expuesto en frontend
+✅ Comunicados completos: 9/9 artes
+✅ Errores de red no se transforman en listas/objetos vacíos
+✅ Resultado antes de cierre Edge
+✅ Resultado+puntos SQL atómicos
+✅ Pronóstico atomic/race
+✅ Lifecycle status transaccional
+✅ Delete Polla transaccional
+✅ Back overlays
+✅ PIN success positive
+✅ Comunicado clasificados error-safe
+✅ Lista clasificados error-safe
+✅ CSS llaves balanceadas
+✅ Sin declaraciones top-level duplicadas
+✅ TypeScript sin diagnósticos inesperados fuera de runtime Deno/npm
+
+RESULTADO: ✅ SIN ERRORES BLOQUEANTES EN AUDITORÍA ESTÁTICA.
+
+ALCANCE
+Esta validación revisa consistencia estática del paquete, rutas, versiones, seguridad visible, estados críticos y dependencias locales. La validación final de latencia, comportamiento PWA, navegador, concurrencia real y ciclo operativo necesita desplegar esta RC en Beta y ejecutar la batería exhaustiva acordada.
+
+COMUNICADOS
+El paquete incluye los 9 artes referenciados por el código dentro de /comunicados y la lógica de Resultados/Clasificados distingue un fallo de red de una lista realmente vacía.

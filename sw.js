@@ -1,18 +1,20 @@
-// Service Worker de La Polla TICO — V25H4.7 hotfix de caché/frontend.
+// Service Worker de La Polla TICO — V25H4.9 hotfix de caché/frontend.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h47-fix1';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h47-fix1';
+const SHELL_CACHE = 'polla-tico-shell-v25h49';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h49';
 
-const SHELL_FILES = [
+const ESSENTIAL_SHELL_FILES = [
   './',
   './index.html',
   './app-core.js',
   './app-main.js',
   './app-pwa.js',
   './styles.css',
-  './manifest.json',
+  './manifest.json'
+];
+const OPTIONAL_SHELL_FILES = [
   './icon-180.png',
   './icon-192.png',
   './icon-512.png',
@@ -25,19 +27,26 @@ const SHELL_FILES = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async()=>{
-    const cache = await caches.open(SHELL_CACHE);
-    // Fuerza una copia fresca del shell para no reutilizar HTML viejo del HTTP cache.
-    await Promise.all(SHELL_FILES.map(async (path) => {
+    const cache=await caches.open(SHELL_CACHE);
+    // Un SW nuevo NO puede instalarse si falta una pieza esencial del app shell.
+    // Así evitamos activar una actualización parcial que deje la PWA en blanco.
+    for(const path of ESSENTIAL_SHELL_FILES){
+      const response=await fetch(new Request(path,{cache:'reload'}));
+      if(!response || !response.ok) throw new Error(`Essential shell unavailable: ${path}`);
+      await cache.put(path,response.clone());
+    }
+    // Íconos/mascota son visuales opcionales: si uno falla no rompe el update.
+    await Promise.all(OPTIONAL_SHELL_FILES.map(async(path)=>{
       try{
-        const response = await fetch(new Request(path, {cache:'reload'}));
-        if(response && response.ok) await cache.put(path, response.clone());
-      }catch(_){ /* un asset opcional no debe romper toda la instalación */ }
+        const response=await fetch(new Request(path,{cache:'reload'}));
+        if(response && response.ok) await cache.put(path,response.clone());
+      }catch(_){ }
     }));
   })());
-  // V25B1.1: NO skipWaiting automático. Esperamos la confirmación del usuario.
+  // No skipWaiting automático: esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H4.7';
+const SW_VERSION = 'V25H4.9';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){
@@ -53,7 +62,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil((async()=>{
     const names = await caches.keys();
     await Promise.all(names
-      .filter(n => n !== SHELL_CACHE && n !== RUNTIME_CACHE)
+      .filter(n => n.startsWith('polla-tico-') && n !== SHELL_CACHE && n !== RUNTIME_CACHE)
       .map(n => caches.delete(n)));
     if(self.registration.navigationPreload){
       try{ await self.registration.navigationPreload.enable(); }catch(_){ }

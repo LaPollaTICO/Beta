@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25H4.7)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H4.9)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
@@ -89,7 +89,7 @@ function showAppUpdateNotice(waitingVersion=''){
     // F4: algunos navegadores/PWA tardan en emitir controllerchange aunque el
     // worker nuevo ya se haya activado. No dejamos el botón eternamente en
     // “Actualizando…”. Si en 8 s no llegó el evento, hacemos una única recarga
-    // controlada; el SW nuevo usa network-first para servir el HTML fresco.
+    // controlada; el SW nuevo ya habrá tomado control y servirá su shell actualizado.
     setTimeout(()=>{
       if(!appUpdateApplying || appUpdateReloaded_) return;
       appUpdateReloaded_ = true;

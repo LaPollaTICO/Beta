@@ -1,0 +1,40 @@
+LaPollaTICO V25H4.9 — CONTENIDO
+
+APP / PWA
+- index.html
+- styles.css
+- app-core.js
+- app-main.js
+- app-pwa.js
+- sw.js
+- manifest.json
+
+ASSETS RAÍZ
+- icon-180.png
+- icon-192.png
+- icon-512.png
+- icon-maskable-512.png
+- apple-touch-icon.png
+- favicon-16x16.png
+- favicon-32x32.png
+- mascota-gallo-peru.png (optimizada para reducir peso)
+
+COMUNICADOS
+- comunicados/01_aviso_importante.png
+- comunicados/02_ultimos_minutos.png
+- comunicados/03_recordatorio_pago.png
+- comunicados/04_resultados_disponibles.png
+- comunicados/05_clasificados_polla_gratuita.png
+- comunicados/06_invita_amigos.png
+- comunicados/07_ya_abrimos_inscripciones.png
+- comunicados/08_revisa_pronosticos_jornada_hoy.png
+- comunicados/09_metodos_de_pago.png
+
+BACKEND / DB
+- polla-api-index-v25h49.ts
+- V25H49_full.sql
+
+CONTROL
+- H49_INSTALACION.txt
+- AUDITORIA_TOTAL_H49_FINAL.txt
+- SHA256SUMS.txt

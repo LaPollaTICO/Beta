@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4.7';
+const APP_VERSION = 'V25H4.9';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -234,19 +234,66 @@ window.addEventListener('beforeunload', (ev)=>{
 document.addEventListener('DOMContentLoaded', updateConnectionBar_);
 
 let overlayStackCounter = 0;
+let overlayDismissBackInFlight_ = false;
+function routeHistoryState_(){
+  return currentPolla
+    ? {view:'polla', pollaId:currentPolla.id}
+    : {view:'landing'};
+}
+function routeHistoryUrl_(){
+  const url=new URL(location.href);
+  if(currentPolla){
+    url.searchParams.set('polla',currentPolla.id);
+    url.searchParams.delete('ref');
+    return url.pathname + '?' + url.searchParams.toString();
+  }
+  return url.pathname;
+}
 function openOverlay(id){
   const el = document.getElementById(id);
   if(!el) return;
+  const wasVisible=el.classList.contains('show');
   overlayStackCounter += 1;
   el.style.zIndex = String(100 + overlayStackCounter * 10);
   el.classList.add('show');
+  // Cada capa visual obtiene una entrada de History. Así el botón/gesto Atrás
+  // funciona igual dentro de una Polla y desde el Landing.
+  if(!wasVisible){
+    history.pushState({...routeHistoryState_(),ticoOverlay:id},'',location.href);
+  }
 }
 function closeOverlay(id){
   const el = document.getElementById(id);
   if(!el) return;
   el.classList.remove('show');
   el.style.zIndex = '';
+  // Cierre programático: limpiamos el marcador de la entrada actual sin
+  // disparar navegación asíncrona (evita carreras gate Admin -> panel Admin).
+  if(history.state?.ticoOverlay===id){
+    history.replaceState(routeHistoryState_(),'',routeHistoryUrl_());
+  }
 }
+function dismissOverlay(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('show');
+  el.style.zIndex='';
+  if(history.state?.ticoOverlay===id){
+    overlayDismissBackInFlight_=true;
+    history.back();
+  }
+}
+
+function topVisibleOverlay_(){
+  const visible=[...document.querySelectorAll('.overlay.show')];
+  if(!visible.length) return null;
+  return visible.reduce((top,el)=>{
+    const z=Number.parseInt(getComputedStyle(el).zIndex,10) || 0;
+    const topZ=top ? (Number.parseInt(getComputedStyle(top).zIndex,10) || 0) : -1;
+    return z >= topZ ? el : top;
+  }, null);
+}
+
 
 let adminSessionCountdownTimer_ = null;
 function updateAdminSessionCountdown_(){
@@ -359,7 +406,10 @@ function startLabel(dateStr){
   else { const mins = Math.floor(diffMs / 60000); text = `📝 ¡Cierre de inscripciones en ${mins} min!`; }
   return {text, soon};
 }
-function isClosed(iso){ return new Date() > new Date(iso); }
+function isClosed(iso){
+  const closeMs = new Date(iso).getTime();
+  return Number.isFinite(closeMs) && Date.now() >= closeMs;
+}
 function siteUrl(){ return location.origin + location.pathname; }
 function fmtCountdown(iso){
   const diff = new Date(iso) - new Date();
@@ -1589,6 +1639,18 @@ function goToLanding(fromHistory_=false){
   }
 }
 window.addEventListener('popstate', (event) => {
+  // H4.9: cada overlay tiene su propia entrada. Atrás elimina exactamente una
+  // capa. Si el cierre vino del botón ✕/Listo, no cerramos una segunda capa.
+  if(overlayDismissBackInFlight_){
+    overlayDismissBackInFlight_=false;
+    return;
+  }
+  const topOverlay=topVisibleOverlay_();
+  if(topOverlay){
+    closeOverlay(topOverlay.id);
+    return;
+  }
+
   const params = new URLSearchParams(location.search);
   const pollaId = params.get('polla');
   if(currentPolla && !pollaId){
@@ -1726,7 +1788,13 @@ function updateCountdowns(){
   });
   // Si algún partido acaba de cerrar, reconstruimos las tarjetas para que se vea
   // "Cerró" y se bloqueen los inputs de una vez, sin esperar a salir y volver a entrar.
-  if(needsRerender) renderMatches();
+  if(needsRerender){
+    renderMatches();
+    if(document.getElementById('adminOverlay')?.classList.contains('show')){
+      void renderAdminMatchList(true);
+      renderAdminOverview_();
+    }
+  }
 }
 
 /* ============ POLLAS ANTERIORES / GANADORES ============ */
@@ -1837,7 +1905,8 @@ async function showWinners(pollaId){
   document.getElementById('winnersList').innerHTML = '<p class="hint">Cargando...</p>';
   try{
     const polla = allPollas.find(p => String(p.id) === String(pollaId)) || await apiGet('getPollaSummary',{pollaId});
-    const standings = await apiGet('getStandings', {pollaId}).catch(()=>[]);
+    const standings = await apiGet('getStandings', {pollaId});
+    if(!Array.isArray(standings)) throw new Error('Tabla inválida');
     document.getElementById('winnersTitle').textContent = `Ganadores · Polla # ${polla.number}`;
     const medals = ['🥇','🥈','🥉'];
     const premios = [polla.premio1, polla.premio2, polla.premio3];
@@ -1852,6 +1921,8 @@ async function showWinners(pollaId){
           <div><div class="prize-place">${escapeHtml(s.name)} · ${s.totalPoints} pts</div><div class="prize-text">${escapeHtml(sharedPrizeText(premios[s.medalIdx], groupCounts[s.medalIdx] || 1))}</div></div>
         </div>`).join('');
     }
+  } catch(_){
+    document.getElementById('winnersList').innerHTML = '<p class="hint">📡 No se pudieron cargar los ganadores. Revisa tu conexión e inténtalo nuevamente.</p>';
   } finally { busyFlags.winners = false; }
 }
 
@@ -1940,7 +2011,9 @@ async function isBlockedFromFreePolla_(name){
 
 function clearAccessBlocks(){
   ['accessPinBlock','accessActivationBlock','accessRegisterBlock','accessRecoveryBlock'].forEach(id=>document.getElementById(id).classList.add('hidden'));
-  document.getElementById('playerAccessError').textContent='';
+  const accessStatus=document.getElementById('playerAccessError');
+  accessStatus.textContent='';
+  accessStatus.className='name-status err';
 }
 function showAccessMode(mode){
   clearAccessBlocks();
@@ -1949,7 +2022,11 @@ function showAccessMode(mode){
   if(mode==='REGISTER') document.getElementById('accessRegisterBlock').classList.remove('hidden');
   if(mode==='RECOVERY') document.getElementById('accessRecoveryBlock').classList.remove('hidden');
 }
-function accessError(msg){ const el=document.getElementById('playerAccessError'); el.textContent=msg||''; }
+function accessError(msg, kind='err'){
+  const el=document.getElementById('playerAccessError');
+  el.textContent=msg||'';
+  el.className='name-status ' + (kind==='ok' ? 'ok' : 'err');
+}
 
 async function checkName(){
   if(isHistoricalReadOnlyPolla_()){ showToast_('Esta Polla está finalizada. El histórico es solo de consulta.'); return; }
@@ -2025,7 +2102,13 @@ async function submitActivation(){
   if(!code){accessError('Ingresa el código que te brindó Manolo.');return;}
   if(!/^\d{5}$/.test(pin)){accessError('Tu nuevo PIN debe tener 5 números.');return;}
   const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin});
-  if(!result.ok){accessError(result.error==='CODIGO_ACTIVACION_INVALIDO'?'El código de activación no es correcto.':result.error);return;}
+  if(!result.ok){
+    if(result.error==='CODIGO_ACTIVACION_INVALIDO') accessError(`El código de activación no es correcto.${result.attemptsLeft!==undefined?' Te quedan '+result.attemptsLeft+' intento(s).':''}`);
+    else if(result.error==='ACTIVATION_LOCKED') accessError(`Demasiados intentos de activación. Espera ${result.minutesLeft||10} minuto(s) y vuelve a intentar.`);
+    else if(result.error==='PIN_INVALIDO') accessError('Tu nuevo PIN debe tener 5 números.');
+    else accessError(result.error||'No se pudo activar la cuenta.');
+    return;
+  }
   closeOverlay('playerAccessOverlay');
   await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,false,false,result.needsSecurityAnswer,result.referralCode));
 }
@@ -2077,7 +2160,7 @@ async function submitRecoveryFromModal(){
     if(result.error==='RECOVERY_LOCKED'){accessError(`Demasiados intentos de recuperación desde este dispositivo/origen. Intenta nuevamente en ${result.minutesLeft||5} min.`);return;}
     accessError(result.error==='RESPUESTA_INCORRECTA'?`Respuesta incorrecta${result.attemptsLeft!==undefined?` · quedan ${result.attemptsLeft} intento(s)`:''}.`:result.error); return;
   }
-  showAccessMode('PIN'); document.getElementById('accessPinInput').value=pin; accessError('PIN restablecido. Ya puedes entrar.');
+  showAccessMode('PIN'); document.getElementById('accessPinInput').value=pin; accessError('✅ PIN restablecido. Ya puedes entrar.','ok');
 }
 function chooseOtherPerson(){
   closeOverlay('playerAccessOverlay');
@@ -2338,9 +2421,13 @@ async function inviteFriends(){
   if(!authedName) return;
   if(!myReferralCode){
     const me = await getMyParticipantStatus_(true);
-    myReferralCode = me?.ok ? (me.referralCode || '') : '';
+    myReferralCode = me?.ok ? String(me.referralCode || '').trim() : '';
   }
-  const link = `${siteUrl()}?polla=${currentPolla.id}&ref=${myReferralCode}`;
+  if(!myReferralCode){
+    alert('📡 No se pudo obtener tu código de invitación. Revisa tu conexión e inténtalo nuevamente.');
+    return;
+  }
+  const link = `${siteUrl()}?polla=${currentPolla.id}&ref=${encodeURIComponent(myReferralCode)}`;
   const text = `⚽ ¡Únete a la Polla "TICO" # ${currentPolla.number}! Usa mi código ${myReferralCode} al registrarte.\n👉 ${link}`;
   showGlobalLoader();
   let blob;
@@ -2352,29 +2439,43 @@ async function inviteFriends(){
 
 function compressImage(file, maxWidth=900, quality=0.72){
   return new Promise((resolve, reject) => {
+    if(!file || !String(file.type||'').startsWith('image/')){
+      reject(new Error('Selecciona un archivo de imagen válido.'));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
         const work = () => {
-          const scale = Math.min(1, maxWidth / img.width);
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(img.width * scale));
-          canvas.height = Math.max(1, Math.round(img.height * scale));
-          const ctx = canvas.getContext('2d', {alpha:false});
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', quality).split(',')[1]);
+          try{
+            if(!img.width || !img.height) throw new Error('La imagen no tiene dimensiones válidas.');
+            const scale = Math.min(1, maxWidth / img.width);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            const ctx = canvas.getContext('2d', {alpha:false});
+            if(!ctx) throw new Error('Tu navegador no pudo procesar la imagen.');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const dataUrl=canvas.toDataURL('image/jpeg', quality);
+            const base64=String(dataUrl||'').split(',')[1] || '';
+            if(!base64) throw new Error('No se pudo comprimir la imagen.');
+            resolve(base64);
+          }catch(err){ reject(err); }
         };
-        // Deja pintar primero el estado "Subiendo..." antes de comprimir.
         if('requestIdleCallback' in window) requestIdleCallback(work,{timeout:120});
         else setTimeout(work,0);
       };
-      img.onerror = reject; img.src = e.target.result;
+      img.onerror = () => reject(new Error('No se pudo leer la imagen seleccionada.'));
+      img.src = e.target?.result;
     };
-    reader.onerror = reject; reader.readAsDataURL(file);
+    reader.onerror = () => reject(new Error('No se pudo abrir el archivo de imagen.'));
+    reader.readAsDataURL(file);
   });
 }
-
+function imageErrorMessage_(err){
+  return err?.message || 'No se pudo procesar la imagen seleccionada.';
+}
 /* ============ PARTIDOS Y CASILLAS ============ */
 async function fetchPredictionTrendsForMatchIds_(matchIds, silent=true){
   const ids=[...new Set((matchIds||[]).map(String).filter(Boolean))]
@@ -2496,9 +2597,10 @@ async function getParticipantsCached_(force=false, silent=false){
     return participantsCache;
   }
   const loaded = await (silent ? apiGetSilent('getParticipants',{pollaId:currentPolla.id}) : apiGet('getParticipants',{pollaId:currentPolla.id}));
-  participantsCache = Array.isArray(loaded) ? loaded : [];
+  if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'No se pudo cargar la lista de participantes.');
+  participantsCache = loaded;
   participantsCachePollaId = currentPolla.id;
-  participantsCacheAt = now;
+  participantsCacheAt = Date.now();
   return participantsCache;
 }
 async function getStandingsCached_(force=false, silent=false){
@@ -2525,17 +2627,20 @@ async function getYearlyStandingsCached_(force=false, silent=false){
 
 async function getPredictions(matchId, force){
   if(!force && predictionsCache[matchId]) return predictionsCache[matchId];
-  const val = await apiGet('getPredictions', {matchId, pollaId: currentPolla ? currentPolla.id : ''}).catch(()=>[]);
+  const val = await apiGet('getPredictions', {matchId, pollaId: currentPolla ? currentPolla.id : ''});
+  if(!Array.isArray(val)) throw new Error(val?.error || 'No se pudieron cargar los pronósticos.');
   predictionsCache[matchId] = val;
   return val;
 }
 async function refreshAllPredictions(){
   const [allPreds,trends] = await Promise.all([
-    apiGet('getAllPredictions',{pollaId:currentPolla.id}).catch(()=>({})),
-    apiGet('getPredictionTrends',{pollaId:currentPolla.id}).catch(()=>({}))
+    apiGet('getAllPredictions',{pollaId:currentPolla.id}),
+    apiGet('getPredictionTrends',{pollaId:currentPolla.id})
   ]);
-  predictionTrendsCache=trends||{};
-  predictionsCache = allPreds || {};
+  if(!allPreds || typeof allPreds!=='object' || Array.isArray(allPreds)) throw new Error('Pronósticos inválidos');
+  if(!trends || typeof trends!=='object' || Array.isArray(trends)) throw new Error('Tendencias inválidas');
+  predictionTrendsCache=trends;
+  predictionsCache = allPreds;
   matches.forEach(m => { if(!predictionsCache[m.id]) predictionsCache[m.id] = []; });
 }
 
@@ -3142,6 +3247,7 @@ async function submitPrediction(matchId){
   if(playerActionBlocked_('prediction')) return;
   if(!authedName){ alert('Confirma tu nombre primero.'); return; }
   const match = matches.find(m => m.id === matchId);
+  if(!match){ alert('No encontramos este partido. Actualiza la Polla e inténtalo otra vez.'); return; }
   if(isClosed(match.closeAt)){ alert('Este partido ya cerró.'); await loadMatches(); return; }
 
   const homeVal = document.getElementById(`score-${matchId}-home`).value;
@@ -3242,9 +3348,8 @@ async function openAdminGate(){
   if(hasValidAdminSession_()){
     if(!adminName) adminName = askAdminName_();
     if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
-      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
-      allPollasLoadedAt_ = Date.now();
-      allPollasScope_ = 'admin';
+      const refreshed=await refreshAdminPollasSafe_(true);
+      if(!refreshed && allPollasScope_!=='admin') return;
     }
     renderPollasAdminList();
     renderSeasonInfoBox();
@@ -3253,6 +3358,25 @@ async function openAdminGate(){
   }
   prepareAdminGate_('pollas');
 }
+async function refreshAdminPollasSafe_(showError=true){
+  try{
+    const fresh=await apiGet('getPollas',{scope:'admin'});
+    if(!Array.isArray(fresh)) throw new Error('Respuesta inválida');
+    allPollas=fresh;
+    allPollasLoadedAt_=Date.now();
+    allPollasScope_='admin';
+    return true;
+  }catch(_){
+    if(showError) showToast_('📡 No se pudo actualizar la lista de Pollas. Se mantienen los últimos datos disponibles.');
+    return false;
+  }
+}
+function syncCurrentPollaFromAdminCache_(){
+  if(!currentPolla) return;
+  const updated=allPollas.find(p=>String(p.id)===String(currentPolla.id));
+  if(updated) currentPolla=updated;
+}
+
 function toggleGatePinVisibility(){
   const input = document.getElementById('gatePinInput');
   const btn = document.getElementById('gatePinToggle');
@@ -3294,9 +3418,8 @@ async function checkGatePin(){
     // OPT V15: si la lista de Pollas se cargó hace segundos en el landing, no
     // la pedimos otra vez solo por abrir Admin. Si ya envejeció, sí se refresca.
     if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
-      allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
-      allPollasLoadedAt_ = Date.now();
-      allPollasScope_ = 'admin';
+      const refreshed=await refreshAdminPollasSafe_(true);
+      if(!refreshed && allPollasScope_!=='admin') return;
     }
     renderPollasAdminList();
     renderSeasonInfoBox();
@@ -3459,23 +3582,25 @@ async function addPolla(){
   const status = document.getElementById('newPollaStatus').value;
   const startDateRaw = document.getElementById('newPollaStartDate').value;
   const startDate = startDateRaw ? peruInputToISOString_(startDateRaw) : '';
-  const totalMatches = document.getElementById('newPollaTotalMatches').value.trim();
+  const totalMatchesRaw = document.getElementById('newPollaTotalMatches').value.trim();
   const file = document.getElementById('newPollaImage').files[0];
   const isFree = document.getElementById('newPollaIsFree').checked;
   if(!number){ alert('Escribe el número de la Polla.'); return; }
+  if(number.length>40){ alert('El identificador de la Polla es demasiado largo.'); return; }
+  if(startDateRaw && !startDate){ alert('La fecha y hora de inicio no son válidas.'); return; }
+  if(totalMatchesRaw!=='' && (!/^\d+$/.test(totalMatchesRaw) || Number(totalMatchesRaw)<0)){ alert('Total de partidos inválido.'); return; }
   const dup = allPollas.find(p => String(p.number).trim() === number);
   if(dup){ alert(`Ya existe una Polla con el número ${number}.`); return; }
-
-  const params = {action:'addPolla', number, status, startDate, totalMatches, isFreePolla: isFree.toString(), pin: adminPin, adminName: adminName};
-  if(file){ params.imageBase64 = await compressImage(file, 700, 0.75); params.imageMime = 'image/jpeg'; }
-  const result = await apiPost(params);
-  if(!result.ok){ alert(result.error || 'No se pudo crear.'); return; }
-  clearNewPollaForm();
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
-  allPollasLoadedAt_ = Date.now(); allPollasScope_ = 'admin';
-  renderPollasAdminList();
-  renderLanding();
-  showToast_(`✅ Polla #${number} creada correctamente`);
+  try{
+    const params = {action:'addPolla', number, status, startDate, totalMatches:totalMatchesRaw, isFreePolla:isFree.toString(), pin:adminPin, adminName};
+    if(file){ params.imageBase64 = await compressImage(file,700,0.75); params.imageMime='image/jpeg'; }
+    const result = await apiPost(params);
+    if(!result.ok){ alert(result.error || 'No se pudo crear.'); return; }
+    clearNewPollaForm();
+    await refreshAdminPollasSafe_(true);
+    renderPollasAdminList(); renderLanding();
+    showToast_(`✅ Polla #${number} creada correctamente`);
+  }catch(err){ alert('⚠️ No se pudo crear la Polla. ' + imageErrorMessage_(err)); }
 }
 function renderPollasAdminList(){
   const list = document.getElementById('pollasAdminList');
@@ -3519,7 +3644,7 @@ async function archivePollaAction(id){
   if(!confirm('¿Archivar esta Polla?\n\nSe conserva completa para consulta, pero quedará congelada para edición.')) return;
   const result = await apiPost({action:'archivePolla', id, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo archivar.'); return; }
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  await refreshAdminPollasSafe_(true);
   renderPollasAdminList();
   alert('🗄️ Polla archivada.');
 }
@@ -3527,7 +3652,7 @@ async function desarchivarPollaAction(id){
   if(!confirm('¿Desarchivar esta Polla?\n\nSaldrá del archivo, pero seguirá FINALIZADA y protegida. Para modificar datos deportivos después deberás usar “Reabrir para corregir”.')) return;
   const result = await apiPost({action:'desarchivarPolla', id, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo desarchivar.'); return; }
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  await refreshAdminPollasSafe_(true);
   renderPollasAdminList();
   alert('📤 Polla desarchivada. Sigue finalizada y protegida; usa “Reabrir” si necesitas corregirla.');
 }
@@ -3536,44 +3661,46 @@ async function reopenPollaAction(id){
   await withSensitiveAdminConfirmation_('reopenPolla','Confirma tu clave para reabrir una Polla finalizada.', async()=>{
     const result=await apiPost({action:'editPolla',id,status:'actual',pin:adminPin,adminName:adminName});
     if(!result.ok){alert(result.error||'No se pudo reabrir.');return;}
-    allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
+    await refreshAdminPollasSafe_(true); renderPollasAdminList(); renderLanding(); alert('🔓 Polla reabierta. Ya puedes hacer las correcciones necesarias.');
   });
 }
 function toggleEditPolla(id){ document.getElementById('editpolla-'+id).classList.toggle('show'); }
 async function savePollaEdit(id){
   const number = document.getElementById(`editpolla-num-${id}`).value.trim();
-  const totalMatches = document.getElementById(`editpolla-total-${id}`).value.trim();
+  const totalMatchesRaw = document.getElementById(`editpolla-total-${id}`).value.trim();
   const startDateRaw = document.getElementById(`editpolla-date-${id}`).value;
   const startDate = startDateRaw ? peruInputToISOString_(startDateRaw) : '';
   const file = document.getElementById(`editpolla-img-${id}`).files[0];
   const isFree = document.getElementById(`editpolla-free-${id}`).checked;
   if(!number){ alert('El número no puede estar vacío.'); return; }
+  if(number.length>40){ alert('El identificador de la Polla es demasiado largo.'); return; }
+  if(startDateRaw && !startDate){ alert('La fecha y hora de inicio no son válidas.'); return; }
+  if(totalMatchesRaw!=='' && (!/^\d+$/.test(totalMatchesRaw) || Number(totalMatchesRaw)<0)){ alert('Total de partidos inválido.'); return; }
   const dup = allPollas.find(p => p.id !== id && String(p.number).trim() === number);
   if(dup){ alert(`Ya existe otra Polla con el número ${number}.`); return; }
-  const params = {action:'editPolla', id, number, startDate, totalMatches, isFreePolla: isFree.toString(), pin: adminPin, adminName: adminName};
-  if(file){ params.imageBase64 = await compressImage(file, 700, 0.75); params.imageMime = 'image/jpeg'; }
-  const result = await apiPost(params);
-  if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
-  // 🏆 Si se editó la Polla que se está viendo ahora mismo, refleja el
-  // cambio del botón de Ganadores de inmediato, sin tener que salir y
-  // volver a entrar a la Polla.
-  if(currentPolla && currentPolla.id === id){
-    currentPolla = allPollas.find(p => p.id === id) || currentPolla;
-    updateWinnersButtonVisibility();
-  }
-  renderPollasAdminList(); renderLanding();
-  showToast_(`✅ Polla #${number} actualizada correctamente`);
+  try{
+    const params = {action:'editPolla', id, number, startDate, totalMatches:totalMatchesRaw, isFreePolla:isFree.toString(), pin:adminPin, adminName};
+    if(file){ params.imageBase64 = await compressImage(file,700,0.75); params.imageMime='image/jpeg'; }
+    const result = await apiPost(params);
+    if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
+    await refreshAdminPollasSafe_(true);
+    if(currentPolla && currentPolla.id === id){ syncCurrentPollaFromAdminCache_(); updateWinnersButtonVisibility(); }
+    renderPollasAdminList(); renderLanding();
+    showToast_(`✅ Polla #${number} actualizada correctamente`);
+  }catch(err){ alert('⚠️ No se pudo actualizar la Polla. ' + imageErrorMessage_(err)); }
 }
 async function setPollaStatus(id,status){
   if(status==='finalizada'){
-    const p=allPollas.find(x=>x.id===id); const ms=await apiGet('getMatches',{pollaId:id}).catch(()=>[]); const pending=ms.filter(m=>!m.resultSubmitted&&!m.isCanceled);
+    const p=allPollas.find(x=>x.id===id);
+    const ms=await apiGet('getMatches',{pollaId:id}).catch(()=>null);
+    if(!Array.isArray(ms)){ alert('⚠️ No se pudo verificar los partidos. No se finalizará la Polla hasta confirmar el estado real.'); return; }
+    const pending=ms.filter(m=>!m.resultSubmitted&&!m.isCanceled);
     if(pending.length){alert(`❌ No se puede finalizar la Polla #${p?.number||''}. Faltan: ${pending.map(m=>'Partido #'+m.matchNumber).join(', ')}.`);return;}
     if(!confirm('✅ Todos los partidos están resueltos o cancelados.\n\n¿Finalizar y archivar esta Polla?'))return;
   }
   const result=await apiPost({action:'editPolla',id,status,pin:adminPin,adminName:adminName});
   if(!result.ok){alert(result.error||'No se pudo cambiar el estado.');return;}
-  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);renderPollasAdminList();renderLanding();
+  await refreshAdminPollasSafe_(true);renderPollasAdminList();renderLanding();
 }
 async function deletePolla(id){
   const protectedPolla=allPollas.find(p=>String(p.id)===String(id));
@@ -3591,7 +3718,7 @@ async function deletePolla(id){
     }
     const result = await apiPost(params);
     if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
-    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
+    await refreshAdminPollasSafe_(true);
     renderPollasAdminList(); renderLanding();
   });
 }
@@ -3609,7 +3736,7 @@ async function openCurrentPollaAdminAfterAuth_(){
   // participantes y conteos ya cargados. Las mutaciones invalidan esos caches.
   void renderParticipantsList(false);
   collapsedAdminGroups = computeDefaultCollapsedGroups();
-  void renderAdminMatchList(false);
+  void renderAdminMatchList(true);
   document.getElementById('premio1Input').value = currentPolla.premio1 || '';
   document.getElementById('premio2Input').value = currentPolla.premio2 || '';
   document.getElementById('premio3Input').value = currentPolla.premio3 || '';
@@ -3926,12 +4053,13 @@ async function toggleShowWinnersLive(checked){
     return;
   }
   currentPolla.showWinnersLive = checked;
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  await refreshAdminPollasSafe_(true);
   updateWinnersButtonVisibility();
 }
 
 async function sendRecruitmentReminder(){
-  const parts = await apiGet('getParticipants', {pollaId: currentPolla.id}).catch(()=>[]);
+  const parts = await apiGet('getParticipants', {pollaId: currentPolla.id}).catch(()=>null);
+  if(!Array.isArray(parts)){ alert('📡 No se pudo verificar cuántos participantes hay. Inténtalo nuevamente.'); return; }
   const n = parts.length;
   if(n === 0){ alert('Todavía no hay nadie inscrito en esta Polla.'); return; }
   const link = `${siteUrl()}?polla=${currentPolla.id}`;
@@ -3985,7 +4113,10 @@ async function getMissingForMatch_(matchId){
 function renderPozo(){
   const box = document.getElementById('pozoBox');
   if(!box) return;
-  const totalParticipantes = Array.isArray((adminParticipantsCachePollaId===currentPolla?.id?adminParticipantsCache:participantsCache)) && (adminParticipantsCachePollaId===currentPolla?.id?adminParticipantsCache:participantsCache).length ? (adminParticipantsCachePollaId===currentPolla?.id?adminParticipantsCache:participantsCache).length : (Number.isFinite(Number(currentPolla?.participantCount)) ? Number(currentPolla.participantCount) : 0);
+  const participantSource = adminParticipantsCachePollaId===currentPolla?.id ? adminParticipantsCache : participantsCache;
+  const totalParticipantes = Array.isArray(participantSource) && participantSource.length
+    ? participantSource.length
+    : (Number.isFinite(Number(currentPolla?.participantCount)) ? Number(currentPolla.participantCount) : 0);
   const recaudado = totalParticipantes * PRECIO_POR_PERSONA;
   const pozo = recaudado * PORCENTAJE_POZO;
   box.innerHTML = `
@@ -4021,7 +4152,11 @@ async function renderFreeContestBox(){
 // un grupo/lista de difusión armada solo con ellos.
 async function inviteFreeContestQualifiers(){
   const stats = await apiGet('getFreeContestStats').catch(()=>null);
-  if(!stats || !stats.qualifiedNames || stats.qualifiedNames.length === 0){
+  if(!stats || !Array.isArray(stats.qualifiedNames)){
+    alert('📡 No se pudo verificar la lista de clasificados. Inténtalo nuevamente.');
+    return;
+  }
+  if(stats.qualifiedNames.length === 0){
     alert('Todavía no hay participantes clasificados para invitar.');
     return;
   }
@@ -4079,9 +4214,7 @@ async function clearSeasonData(){
   if(!result) return;
   if(!result.ok){ alert(result.error || 'No se pudo limpiar la temporada.'); return; }
   alert(`✅ Limpieza segura completada.\n\nPollas protegidas conservadas: ${result.pollasProtected || 0}\nPartidos residuales borrados: ${result.matchesDeleted || 0}\nPronósticos residuales borrados: ${result.predictionsDeleted || 0}\nParticipaciones residuales borradas: ${result.participantsDeleted || 0}\nReferidos residuales borrados: ${result.referralsDeleted || 0}\n\nJugadores, Ganadores, Temporadas, respaldos y los históricos compactados permanecen intactos.`);
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>[]);
-  allPollasLoadedAt_ = Date.now();
-  allPollasScope_ = 'admin';
+  await refreshAdminPollasSafe_(true);
   renderPollasAdminList();
   renderLanding();
   renderSeasonInfoBox();
@@ -4265,7 +4398,7 @@ async function addParticipants(){
   if(!result.ok){alert(result.error||'No se pudieron agregar.');return;}
   invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null; adminPredictionSummaryAt = 0;
   document.getElementById('participantsInput').value=''; await renderParticipantsList(true);
-  allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla;
+  await refreshAdminPollasSafe_(true); syncCurrentPollaFromAdminCache_();
   renderAdminMatchList();
   if(result.activationCodes?.length) showActivationCodes(result.activationCodes); else alert(`${result.added} participante(s) agregados.`);
 }
@@ -4281,7 +4414,7 @@ async function deleteParticipant(name){
   if(!result.ok){alert(result.error||'No se pudo eliminar.');return;}
   invalidateParticipantsCache_(); adminPredictionSummaryPollaId = null; adminPredictionSummaryAt = 0; invalidateStandingsCaches_();
   alert(result.deletedGlobally?`✅ ${name} fue eliminado de la Polla y también se eliminó su cuenta global.`:`✅ ${name} fue eliminado de esta Polla. Su cuenta e historial se conservaron.`);
-  await renderParticipantsList(true); allPollas=await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas); currentPolla=allPollas.find(p=>p.id===currentPolla.id)||currentPolla; await loadMatches(); renderAdminMatchList();
+  await renderParticipantsList(true); await refreshAdminPollasSafe_(true); syncCurrentPollaFromAdminCache_(); await loadMatches(); renderAdminMatchList();
 }
 function openIdentityManager(name){ pendingIdentityName=name; document.getElementById('identityCurrentLabel').textContent=`Jugador actual: ${name}`; openOverlay('identityAdminOverlay'); }
 async function startGlobalRename(){
@@ -4304,46 +4437,41 @@ async function addMatch(){
   const file = document.getElementById('newImage').files[0];
   const close = document.getElementById('newClose').value;
   const isStar = document.getElementById('newIsStar').checked;
+  const closeIso = peruInputToISOString_(close);
   if(!matchNumber || !home || !away || !file || !close){ alert('Completa número, equipos, foto y hora de cierre.'); return; }
-
+  if(!/^\d+$/.test(matchNumber) || Number(matchNumber)<=0){ alert('El número de partido debe ser un entero mayor que 0.'); return; }
+  if(!closeIso){ alert('La fecha y hora de cierre no son válidas.'); return; }
   const btn = document.getElementById('addMatchBtn');
   btn.disabled = true; btn.textContent = 'Subiendo...';
   try{
     const base64 = await compressImage(file);
     const result = await apiPost({
-      action:'addMatch', pollaId: currentPolla.id, matchNumber, home, away,
-      closeAt: peruInputToISOString_(close), imageBase64: base64, imageMime:'image/jpeg', isStarMatch: isStar.toString(),
-      pin: adminPin, adminName: adminName
+      action:'addMatch', pollaId:currentPolla.id, matchNumber, home, away,
+      closeAt:closeIso, imageBase64:base64, imageMime:'image/jpeg', isStarMatch:isStar.toString(),
+      pin:adminPin, adminName
     });
-    if(!result.ok){ alert(result.error || 'No se pudo agregar.'); }
-    else{
-      const closeDate = new Date(close);
-      const msg = `⚽ Nuevo partido${isStar?' ⭐ ESTRELLA':''}: ${home} vs ${away}\nCierra a las ${closeDate.toLocaleTimeString('es-PE',{hour:'numeric',minute:'2-digit'})}\nEnvía tu pronóstico aquí 👉 ${siteUrl()}?polla=${currentPolla.id}`;
-      try{ await navigator.clipboard.writeText(msg); alert('✅ Partido agregado.\n\n📋 Mensaje copiado para WhatsApp:\n\n' + msg); }
-      catch(err){ alert('✅ Partido agregado.\n\nMensaje para WhatsApp:\n\n' + msg); }
-      clearNewMatchForm();
-
-      // H4.7: el backend devuelve el partido recién creado. Lo incorporamos
-      // localmente y evitamos dos round-trips adicionales solo para reflejarlo.
-      if(result.match){
-        matches = [...matches.filter(m=>String(m.id)!==String(result.match.id)), result.match];
-        matchesCacheByPolla_.set(String(currentPolla.id), {data:matches,at:Date.now()});
-        adminPredictionSummaryCache[result.match.id]=0;
-        adminPredictionSummaryPollaId=currentPolla.id;
-        adminPredictionSummaryAt=Date.now();
-        currentPolla.matchCount = Number(currentPolla.matchCount || matches.length-1) + 1;
-        const inAll=allPollas.find(p=>String(p.id)===String(currentPolla.id));
-        if(inAll) inAll.matchCount=currentPolla.matchCount;
-        collapsedAdminGroups = computeDefaultCollapsedGroups();
-        await renderMatches();
-        await renderAdminMatchList(false);
-        renderAdminOverview_();
-      }else{
-        await loadMatches(true);
-        await renderAdminMatchList(false);
-      }
+    if(!result.ok){ alert(result.error || 'No se pudo agregar.'); return; }
+    const msg = `⚽ Nuevo partido${isStar?' ⭐ ESTRELLA':''}: ${home} vs ${away}
+Cierra ${fmtCloseTime(closeIso)} (hora Perú)
+Envía tu pronóstico aquí 👉 ${siteUrl()}?polla=${currentPolla.id}`;
+    try{ await navigator.clipboard.writeText(msg); alert('✅ Partido agregado.\n\n📋 Mensaje copiado para WhatsApp:\n\n' + msg); }
+    catch(_){ alert('✅ Partido agregado.\n\nMensaje para WhatsApp:\n\n' + msg); }
+    clearNewMatchForm();
+    if(result.match){
+      matches=[...matches.filter(m=>String(m.id)!==String(result.match.id)),result.match];
+      matchesCacheByPolla_.set(String(currentPolla.id),{data:matches,at:Date.now()});
+      adminPredictionSummaryCache[result.match.id]=0;
+      adminPredictionSummaryPollaId=currentPolla.id; adminPredictionSummaryAt=Date.now();
+      currentPolla.matchCount=Number(currentPolla.matchCount || matches.length-1)+1;
+      const inAll=allPollas.find(p=>String(p.id)===String(currentPolla.id));
+      if(inAll) inAll.matchCount=currentPolla.matchCount;
+      collapsedAdminGroups=computeDefaultCollapsedGroups();
+      await renderMatches(); await renderAdminMatchList(false); renderAdminOverview_();
+    }else{
+      await loadMatches(true); await renderAdminMatchList(false);
     }
-  } finally { btn.disabled = false; btn.textContent = 'Agregar partido'; }
+  }catch(err){ alert('⚠️ No se pudo agregar el partido. ' + imageErrorMessage_(err)); }
+  finally{ btn.disabled=false; btn.textContent='Agregar partido'; }
 }
 
 function toggleAdminDateGroup(key){ if(collapsedAdminGroups.has(key))collapsedAdminGroups.delete(key);else collapsedAdminGroups.add(key);renderAdminMatchList(false); }
@@ -4372,7 +4500,9 @@ async function renderAdminMatchList(refreshPredictions=true){
 
   list.innerHTML = groups.map(group => {
     const needed = group.matches.filter(m => !m.isCanceled);
-    const itemsHtml = group.matches.map(m => `
+    const itemsHtml = group.matches.map(m => {
+      const matchClosed = isClosed(m.closeAt);
+      return `
     <div class="list-item" id="admitem-${m.id}">
       <div class="top-row">
         <div class="info">
@@ -4405,17 +4535,18 @@ async function renderAdminMatchList(refreshPredictions=true){
           ? `<span class="result-tag canceled">Partido Cancelado (${escapeHtml(m.cancelReason || 'Fuerza mayor')})</span>`
           : (m.resultSubmitted
             ? `<span class="result-tag done">Resultado: ${m.actualHome}-${m.actualAway} ✓</span>
-               ${sportsLocked_() ? '' : `
-               <div class="result-row"><input type="number" min="0" id="rh-${m.id}" value="${m.actualHome}"><span>-</span><input type="number" min="0" id="ra-${m.id}" value="${m.actualAway}">
-               <button class="icon-btn" title="Corregir resultado" onclick="submitResult('${m.id}')">✏️ Corregir</button></div>`}`
-            : `<span class="result-tag pending">Sin resultado</span>
-               ${sportsLocked_() ? '' : `
-               <div class="result-row"><input type="number" min="0" id="rh-${m.id}" placeholder="${escapeHtml(m.home)}"><span>-</span><input type="number" min="0" id="ra-${m.id}" placeholder="${escapeHtml(m.away)}">
-               <button class="icon-btn" title="Subir resultado" onclick="submitResult('${m.id}')">✅ Subir</button></div>`}`
+               ${(sportsLocked_() || !matchClosed) ? (!matchClosed ? '<div class="hint" style="margin-top:7px;">⏳ La corrección se habilita cuando cierre el partido.</div>' : '') : `
+               <div class="result-row"><input type="number" min="0" step="1" id="rh-${m.id}" value="${m.actualHome}"><span>-</span><input type="number" min="0" step="1" id="ra-${m.id}" value="${m.actualAway}">
+               <button class="icon-btn" id="result-btn-${m.id}" title="Corregir resultado" onclick="submitResult('${m.id}')">✏️ Corregir</button></div>`}`
+            : `<span class="result-tag pending">${matchClosed ? 'Sin resultado' : '⏳ Esperando cierre'}</span>
+               ${(sportsLocked_() || !matchClosed) ? (!matchClosed ? '<div class="hint" style="margin-top:7px;">El resultado se habilita al llegar la hora de cierre.</div>' : '') : `
+               <div class="result-row"><input type="number" min="0" step="1" id="rh-${m.id}" placeholder="${escapeHtml(m.home)}"><span>-</span><input type="number" min="0" step="1" id="ra-${m.id}" placeholder="${escapeHtml(m.away)}">
+               <button class="icon-btn" id="result-btn-${m.id}" title="Subir resultado" onclick="submitResult('${m.id}')">✅ Subir</button></div>`}`
           )
         }
       </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
 
     const canRemind = !sportsLocked_() && needed.some(m => !m.resultSubmitted && !isClosed(m.closeAt));
     return `
@@ -4466,6 +4597,8 @@ async function confirmCancelAndReplace(){
 
   if(!cancelReason){ alert('Escribe el motivo de la cancelación.'); return; }
   if(!rHome || !rAway || !rFile || !rClose){ alert('Completa los datos del nuevo partido de reemplazo.'); return; }
+  const rCloseIso=peruInputToISOString_(rClose);
+  if(!rCloseIso){ alert('La fecha y hora del reemplazo no son válidas.'); return; }
 
   const btn = document.getElementById('confirmCancelBtn');
   btn.disabled = true; btn.textContent = 'Procesando reemplazo...';
@@ -4483,7 +4616,7 @@ async function confirmCancelAndReplace(){
       newMatchNumber: replacementMatchNumber,
       newHome: rHome,
       newAway: rAway,
-      newCloseAt: peruInputToISOString_(rClose),
+      newCloseAt: rCloseIso,
       newImageBase64: base64,
       newImageMime: 'image/jpeg',
       newIsStar: rIsStar.toString(),
@@ -4494,8 +4627,10 @@ async function confirmCancelAndReplace(){
 
     closeOverlay('cancelMatchOverlay');
     alert(`✅ Partido cancelado correctamente.\nSe creó el partido de reemplazo (${rHome} vs ${rAway}).`);
-    await loadMatches();
-    renderAdminMatchList();
+    await loadMatches(true);
+    await renderAdminMatchList(true);
+  } catch(err){
+    alert('⚠️ No se pudo completar el reemplazo. ' + imageErrorMessage_(err));
   } finally {
     btn.disabled = false; btn.textContent = 'Confirmar Cancelación y Reemplazo';
   }
@@ -4503,34 +4638,72 @@ async function confirmCancelAndReplace(){
 
 function toggleEditMatch(matchId){ document.getElementById('editbox-'+matchId).classList.toggle('show'); }
 async function saveMatchEdit(matchId){
-  const matchNumber = document.getElementById(`edit-num-${matchId}`).value.trim();
-  const home = document.getElementById(`edit-home-${matchId}`).value.trim();
-  const away = document.getElementById(`edit-away-${matchId}`).value.trim();
-  const close = document.getElementById(`edit-close-${matchId}`).value;
-  const file = document.getElementById(`edit-image-${matchId}`).files[0];
-  const isStar = document.getElementById(`edit-star-${matchId}`).checked;
+  const matchNumber=document.getElementById(`edit-num-${matchId}`).value.trim();
+  const home=document.getElementById(`edit-home-${matchId}`).value.trim();
+  const away=document.getElementById(`edit-away-${matchId}`).value.trim();
+  const close=document.getElementById(`edit-close-${matchId}`).value;
+  const file=document.getElementById(`edit-image-${matchId}`).files[0];
+  const isStar=document.getElementById(`edit-star-${matchId}`).checked;
+  const closeIso=peruInputToISOString_(close);
   if(!matchNumber || !home || !away || !close){ alert('Completa todos los campos.'); return; }
-  const params = {action:'editMatch', id: matchId, matchNumber, home, away, closeAt: peruInputToISOString_(close), isStarMatch: isStar.toString(), pin: adminPin, adminName: adminName};
-  if(file){ params.imageBase64 = await compressImage(file); params.imageMime = 'image/jpeg'; }
-  const result = await apiPost(params);
-  if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
-  await loadMatches(true);
-  renderAdminMatchList();
-  alert('✅ Partido actualizado.');
+  if(!/^\d+$/.test(matchNumber) || Number(matchNumber)<=0){ alert('El número de partido debe ser un entero mayor que 0.'); return; }
+  if(!closeIso){ alert('La fecha y hora de cierre no son válidas.'); return; }
+  try{
+    const params={action:'editMatch',id:matchId,matchNumber,home,away,closeAt:closeIso,isStarMatch:isStar.toString(),pin:adminPin,adminName};
+    if(file){ params.imageBase64=await compressImage(file); params.imageMime='image/jpeg'; }
+    const result=await apiPost(params);
+    if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
+    await loadMatches(true); await renderAdminMatchList(true);
+    alert('✅ Partido actualizado.');
+  }catch(err){ alert('⚠️ No se pudo actualizar el partido. ' + imageErrorMessage_(err)); }
 }
 async function submitResult(matchId){
-  const home = document.getElementById(`rh-${matchId}`).value;
-  const away = document.getElementById(`ra-${matchId}`).value;
-  if(home === '' || away === ''){ alert('Ingresa el marcador final.'); return; }
+  const match=matches.find(m=>String(m.id)===String(matchId));
+  if(!match){ alert('Partido no encontrado. Actualiza el panel e inténtalo nuevamente.'); return; }
+  if(!isClosed(match.closeAt)){
+    alert(`⏳ Todavía no puedes subir el resultado. Los pronósticos cierran ${fmtCloseTime(match.closeAt)}.`);
+    return;
+  }
+  const homeEl=document.getElementById(`rh-${matchId}`);
+  const awayEl=document.getElementById(`ra-${matchId}`);
+  if(!homeEl || !awayEl){ alert('El formulario de resultado todavía no está disponible.'); return; }
+  const homeRaw=homeEl.value.trim();
+  const awayRaw=awayEl.value.trim();
+  const home=Number(homeRaw);
+  const away=Number(awayRaw);
+  if(homeRaw==='' || awayRaw==='' || !Number.isInteger(home) || !Number.isInteger(away) || home<0 || away<0){
+    alert('Ingresa un marcador final válido con números enteros desde 0.');
+    return;
+  }
+  const busyKey='submitResult_'+matchId;
+  if(busyFlags[busyKey]) return;
   if(!confirm(`¿Confirmar resultado ${home}-${away}? Se recalculan los puntos de todos.`)) return;
-  const result = await apiPost({action:'submitResult', id: matchId, actualHome: home, actualAway: away, pin: adminPin, adminName: adminName});
-  if(!result.ok){ alert(result.error || 'No se pudo guardar el resultado.'); return; }
-  delete predictionsCache[matchId];
-  delete adminPredictionsCache[matchId];
-  invalidateStandingsCaches_();
-  await loadMatches(true);
-  renderAdminMatchList();
+
+  busyFlags[busyKey]=true;
+  const btn=document.getElementById(`result-btn-${matchId}`);
+  const previousText=btn?.textContent || '';
+  if(btn){ btn.disabled=true; btn.textContent='…'; }
+  try{
+    const result = await apiPost({action:'submitResult', id: matchId, actualHome: home, actualAway: away, pin: adminPin, adminName: adminName});
+    if(!result.ok){
+      alert(result.error==='MATCH_NOT_CLOSED'
+        ? '⏳ El servidor confirma que este partido todavía no ha cerrado.'
+        : (result.error || 'No se pudo guardar el resultado.'));
+      return;
+    }
+    delete predictionsCache[matchId];
+    delete adminPredictionsCache[matchId];
+    invalidateStandingsCaches_();
+    await loadMatches(true);
+    await renderAdminMatchList(true);
+    renderAdminOverview_();
+    showToast_(match.resultSubmitted ? '✅ Resultado corregido correctamente' : '✅ Resultado guardado correctamente');
+  } finally {
+    busyFlags[busyKey]=false;
+    if(btn && document.body.contains(btn)){ btn.disabled=false; btn.textContent=previousText; }
+  }
 }
+
 async function deleteMatchAdmin(id){
   if(!confirm('¿Eliminar este partido y sus pronósticos?')) return;
   await withSensitiveAdminConfirmation_('deleteMatch','Confirma tu clave para eliminar este partido.', async()=>{
@@ -4546,7 +4719,7 @@ async function deleteMatchAdmin(id){
     invalidateStandingsCaches_();
     await loadMatches();
     renderAdminMatchList();
-    allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+    await refreshAdminPollasSafe_(true);
   });
 }
 async function savePremios(){
@@ -4578,46 +4751,52 @@ async function saveArchivedPremiosFix_(){
   const result = await apiPost({action:'editArchivedPremios', id: currentPolla.id, premio1, premio2, premio3, pin: adminPin, adminName: adminName});
   if(!result.ok){ alert(result.error || 'No se pudo guardar.'); return; }
   currentPolla.premio1 = premio1; currentPolla.premio2 = premio2; currentPolla.premio3 = premio3;
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
+  await refreshAdminPollasSafe_(true);
   document.getElementById('archivedPremiosForm').style.display = 'none';
   alert('✅ Premios corregidos.');
 }
 async function finalizePolla(){
   const pending = matches.filter(m => !m.resultSubmitted && !m.isCanceled);
-
-  // 🏆 Antes de mostrar el confirm(), calculamos el podio con los datos
-  // actuales para que el admin vea de una vez quién va a quedar campeón
-  // (y pueda cancelar y corregir algo si el resultado se ve raro), en vez
-  // de enterarse recién DESPUÉS de confirmar.
-  const standings = await getStandingsCached_().catch(()=>[]);
-  const medals = ['🥇','🥈','🥉'];
-  const podium = groupPodium(standings);
-
-  let msg;
-  if(podium.length === 0){
-    msg = `¿Finalizar la Polla # ${currentPolla.number}?\n\nTodavía no hay pronósticos registrados, así que no hay podio que calcular.\n\nQuedará archivada automáticamente. ¿Confirmar?`;
-  } else {
-    const podiumText = podium.map(s => `${medals[s.medalIdx] || '🎖️'} ${s.name}: ${s.totalPoints} pts`).join('\n');
-    const campeonesArr = podium.filter(s => s.medalIdx === 0).map(s => s.name);
-    const campeones = campeonesArr.join(' y ');
-    msg = `¿Finalizar la Polla # ${currentPolla.number}?\n\n${podiumText}\n\nSe registrará a ${campeones} como campeón${campeonesArr.length > 1 ? 'es' : ''}. Quedará archivada automáticamente. ¿Confirmar?`;
-  }
   if(pending.length > 0){
     const nums=pending.map(m=>`#${m.matchNumber}`).join(', ');
-    alert(`❌ No se puede finalizar todavía.\n\nFaltan ${pending.length} partido(s) por resolver o cancelar: ${nums}.`);
+    alert(`❌ No se puede finalizar todavía.
+
+Faltan ${pending.length} partido(s) por resolver o cancelar: ${nums}.`);
     return;
   }
-  msg = `✅ Todos los partidos están resueltos o cancelados.\n✅ Tabla calculada.\n✅ Podio revisado.\n\n${msg}`;
+  let standings;
+  try{ standings = await getStandingsCached_(true); }
+  catch(_){ alert('⚠️ No se pudo verificar la tabla actual. No se finalizará la Polla hasta confirmar los datos.'); return; }
+  const medals=['🥇','🥈','🥉'];
+  const podium=groupPodium(standings);
+  let msg;
+  if(podium.length===0){
+    msg=`¿Finalizar la Polla # ${currentPolla.number}?
+
+Todavía no hay pronósticos registrados, así que no hay podio que calcular.
+
+Quedará archivada automáticamente. ¿Confirmar?`;
+  }else{
+    const podiumText=podium.map(x=>`${medals[x.medalIdx]||'🎖️'} ${x.name}: ${x.totalPoints} pts`).join('\n');
+    const campeonesArr=podium.filter(x=>x.medalIdx===0).map(x=>x.name);
+    msg=`¿Finalizar la Polla # ${currentPolla.number}?
+
+${podiumText}
+
+Se registrará a ${campeonesArr.join(' y ')} como campeón${campeonesArr.length>1?'es':''}. Quedará archivada automáticamente. ¿Confirmar?`;
+  }
+  msg=`✅ Todos los partidos están resueltos o cancelados.
+✅ Tabla calculada.
+✅ Podio revisado.
+
+${msg}`;
   if(!confirm(msg)) return;
-  const result=await apiPost({action:'editPolla', id: currentPolla.id, status:'finalizada', pin: adminPin, adminName: adminName});
-  if(!result.ok){alert(result.error||'No se pudo finalizar.');return;}
-  currentPolla.status = 'finalizada';
-  allPollas = await apiGet('getPollas', {scope:'admin'}).catch(()=>allPollas);
-  const updated = allPollas.find(p => p.id === currentPolla.id);
-  if(updated) currentPolla = updated;
+  const result=await apiPost({action:'editPolla',id:currentPolla.id,status:'finalizada',pin:adminPin,adminName});
+  if(!result.ok){ alert(result.error || 'No se pudo finalizar.'); return; }
+  currentPolla.status='finalizada';
+  await refreshAdminPollasSafe_(true); syncCurrentPollaFromAdminCache_();
   alert('🏁 Polla finalizada y archivada. Ya se puede ver su tabla y ganadores, pero para corregirla hay que desarchivarla y luego reabrirla explícitamente desde "Administrar Pollas".');
-  updateWinnersButtonVisibility();
-  closeOverlay('adminOverlay');
+  updateWinnersButtonVisibility(); closeOverlay('adminOverlay');
 }
 let secureBackupBusy_ = false;
 
@@ -4784,8 +4963,8 @@ async function compactPollaV2_(){
   if(badge){badge.textContent='✓ Compactada';badge.className='secure-backup-badge ok';badge.style.color='#111';}
   if(status){status.className='compaction-ready';status.textContent=`Compactación completada. ${Number(result.matchesRemoved)||0} partidos y ${Number(result.predictionsRemoved)||0} pronósticos salieron de las tablas operativas; el histórico protegido permanece disponible.`;}
   invalidateStandingsCaches_();
-  allPollas=await apiGet('getPollas').catch(()=>allPollas);
-  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  await refreshAdminPollasSafe_(true);
+  syncCurrentPollaFromAdminCache_();
   alert('✅ Compactación V2 completada dentro de una transacción. El histórico, el respaldo seguro y la acumulada anual quedaron conservados.');
 }
 
@@ -4878,8 +5057,8 @@ El ZIP privado, el histórico protegido, los puntos, ganadores y jugadores NO se
     return;
   }
   await refreshStorageCleanupStatus_(false);
-  allPollas=await apiGet('getPollas').catch(()=>allPollas);
-  const updated=allPollas.find(p=>p.id===currentPolla.id); if(updated) currentPolla=updated;
+  await refreshAdminPollasSafe_(true);
+  syncCurrentPollaFromAdminCache_();
   renderLanding();
   alert(`✅ Limpieza F5 completada.
 
@@ -5073,12 +5252,24 @@ async function buildCommunication(type){
     txt=`✅ Revisa los pronósticos de la jornada de hoy · Polla TICO #${p.number||''}\n\n${statusLine}\n\n📅 ${dateLabel}\n\nEntra a la app para comparar tus pronósticos, revisar tus puntos y ver cómo quedó la jornada:\n${url}\n\n— Manolo, Administración TICO`;
   }
   else if(type==='results'){
-    const standings=await apiGet('getStandings',{pollaId:p.id}).catch(()=>[]); const podium=groupPodium(standings); const medals=['🥇','🥈','🥉'];
+    const standings=await apiGet('getStandings',{pollaId:p.id}).catch(()=>null);
+    if(!Array.isArray(standings)){ alert('📡 No se pudo verificar la tabla para crear el comunicado.'); return; }
+    const podium=groupPodium(standings); const medals=['🥇','🥈','🥉'];
     txt=`🏆 Resultados · Polla TICO #${p.number||''}\n\n${podium.length?podium.map(x=>`${medals[x.medalIdx]} ${x.name} — ${x.totalPoints} pts`).join('\n'):'La tabla ya fue actualizada.'}\n\nRevisa la tabla completa en la app.\n\n— Manolo`;
   } else if(type==='qualified'){
     const stats=await apiGet('getFreeContestStats').catch(()=>null);
-    const names=stats?.qualifiedNames||[];
-    txt=`🎟️ Clasificados a la Polla Gratuita\n\n${names.length?names.map((n,i)=>`${i+1}. ${n}`).join('\n'):'La lista de clasificados ya está disponible en la app.'}\n\nClasificación según la Tabla Acumulada vigente.\n\n— Manolo, Administración TICO`;
+    if(!stats || !Array.isArray(stats.qualifiedNames)){
+      alert('📡 No se pudo verificar la lista de clasificados. No se generará un comunicado incompleto.');
+      return;
+    }
+    const names=stats.qualifiedNames;
+    txt=`🎟️ Clasificados a la Polla Gratuita
+
+${names.length?names.map((n,i)=>`${i+1}. ${n}`).join('\n'):'Todavía no hay clasificados en la Tabla Acumulada vigente.'}
+
+Clasificación según la Tabla Acumulada vigente.
+
+— Manolo, Administración TICO`;
   } else txt=`📣 COMUNICADO TICO\n\nEscribe aquí tu comunicado.\n\n— Manolo\nAdministración TICO`;
   document.getElementById('communicationText').value=txt;
 }
@@ -5109,7 +5300,11 @@ async function copyAdminList(){
   let names=[]; let title='';
   if(type==='qualified'){
     const stats=await apiGet('getFreeContestStats').catch(()=>null);
-    names=stats?.qualifiedNames||[]; title='Clasificados actuales a la Polla Gratuita';
+    if(!stats || !Array.isArray(stats.qualifiedNames)){
+      alert('📡 No se pudo verificar la lista de clasificados. No se copiará una lista incompleta.');
+      return;
+    }
+    names=stats.qualifiedNames; title='Clasificados actuales a la Polla Gratuita';
   }else{
     const parts=await apiPost({action:'getParticipantsAdmin',pollaId:currentPolla.id,pin:adminPin,adminName:adminName}).catch(()=>null);
     if(!Array.isArray(parts)){alert(parts?.error||'No se pudo cargar la lista.');return;}
@@ -5157,7 +5352,10 @@ async function showResults(matchId, adminMode=false){
         document.getElementById('resultsTable').innerHTML = '<tr><td>⚠️ No se pudieron cargar los pronósticos. Intenta nuevamente.</td></tr>';
         return;
       }
-      if(!Array.isArray(preds)) preds = [];
+      if(!Array.isArray(preds)){
+        document.getElementById('resultsTable').innerHTML = '<tr><td>⚠️ No se pudieron verificar los pronósticos. Intenta nuevamente.</td></tr>';
+        return;
+      }
       predictionsCache[matchId] = preds;
     }
     const table = document.getElementById('resultsTable');
@@ -5197,7 +5395,7 @@ async function showResults(matchId, adminMode=false){
     // no algo que vea cualquier participante que abra "Ver pronósticos de
     // todos", y ya NO se manda por WhatsApp (ver sendJornadaReminder).
     if(adminMode && !match.isCanceled && !match.resultSubmitted){
-      const missing = await getMissingForMatch_(matchId).catch(()=>[]);
+      const missing = await getMissingForMatch_(matchId).catch(()=>null);
       if(missing === null){
         missingBox.innerHTML = `<b>⚠️ No se pudo verificar quién falta. Reintenta.</b>`;
       } else if(missing.length > 0){
@@ -5297,7 +5495,7 @@ async function openHallOfFame(){
   const list = document.getElementById('hallOfFameList');
   list.innerHTML = '<p class="hint">Cargando...</p>';
   try{
-    const ganadores = await apiGet('getGanadores').catch(()=>[]);
+    const ganadores = await apiGet('getGanadores');
     if(!ganadores || ganadores.length === 0){
       list.innerHTML = '<p class="hint">Todavía no hay ganadores registrados.</p>';
       return;
@@ -5310,6 +5508,8 @@ async function openHallOfFame(){
         <div class="ganador-count">${g.wins} 🏆</div>
       </div>`;
     }).join('');
+  } catch(_){
+    list.innerHTML='<p class="hint">📡 No se pudo cargar el Salón de la Fama. Revisa tu conexión e inténtalo nuevamente.</p>';
   } finally { busyFlags.hallOfFame = false; }
 }
 
@@ -5319,9 +5519,15 @@ async function showBadges(name, rankKey){
   document.getElementById('badgesList').innerHTML = '<p class="hint">Cargando...</p>';
   openOverlay('badgesOverlay');
   const isYearly = rankKey === 'yearly';
-  const standings = isYearly
-    ? await getYearlyStandingsCached_().catch(()=>[])
-    : await getStandingsCached_().catch(()=>[]);
+  let standings;
+  try{
+    standings = isYearly
+      ? await getYearlyStandingsCached_()
+      : await getStandingsCached_();
+  }catch(_){
+    document.getElementById('badgesList').innerHTML='<p class="hint">📡 No se pudieron calcular las insignias en este momento.</p>';
+    return;
+  }
   const me = standings.find(s => normalizeName(s.name) === normalizeName(name));
   const exactCount = me ? (me.exactCount || 0) : 0;
   const mvpCount = me ? (me.mvpCount || 0) : 0;
@@ -5396,7 +5602,8 @@ async function exportAllCSV(adminMode=false){
     if(!ok){ alert('No se pudieron cargar los pronósticos para exportar.'); return; }
     source = adminPredictionsCache;
   } else {
-    await refreshAllPredictions();
+    try{ await refreshAllPredictions(); }
+    catch(_){ alert('📡 No se pudieron cargar todos los pronósticos. No se generará un CSV incompleto.'); return; }
     source = predictionsCache;
   }
   matches.forEach(m => {

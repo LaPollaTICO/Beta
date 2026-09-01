@@ -94,6 +94,7 @@ h1{font-family:'Anton', sans-serif; font-size:30px; letter-spacing:1px; margin:6
 .check-btn{flex-shrink:0; width:38px; height:38px; border-radius:10px; border:none; background:var(--floodlight); color:var(--ink); font-size:16px; font-weight:900; cursor:pointer;}
 .name-status{font-size:12px; text-align:center; font-weight:600; min-height:16px;}
 .name-status.ok{color:var(--green-up);}
+.modal .name-status.ok{color:#237A46;}
 .name-status.err{color:var(--red-card);}
 .status-row{display:flex; align-items:center; justify-content:center; gap:8px; margin:6px 0 12px; flex-wrap:wrap;}
 .pin-locked-box{background:rgba(214,69,69,0.12); border:1px solid var(--red-card); border-radius:12px; padding:12px 14px; text-align:center; font-size:12.5px; color:var(--chalk); margin-bottom:18px;}
