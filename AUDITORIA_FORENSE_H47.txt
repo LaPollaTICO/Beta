@@ -1,0 +1,36 @@
+LaPollaTICO V25H4.7 — AUDITORÍA FORENSE FINAL
+
+JS syntax app-main.js: OK
+JS syntax app-core.js: OK
+JS syntax app-pwa.js: OK
+JS syntax sw.js: OK
+HTML IDs duplicados: NINGUNO
+Labels for sin target: NINGUNO
+accessPinInput: <input id="accessPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+registerPinInput: <input id="registerPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+activationPinInput: <input id="activationPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+recoveryPinInput: <input id="recoveryPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+Acciones frontend detectadas: 58
+Acciones backend detectadas: 75
+Acciones frontend sin handler backend: NINGUNA
+Persistencia PIN en Web Storage: NINGUNA
+service_role en frontend: NO (solo existe la palabra en un comentario que advierte que nunca debe exponerse)
+Placeholder PIN login: •••••
+Admin reopen: participantes y conteos reutilizables 30 s; mutaciones fuerzan/invalidad caches.
+AddMatch: respuesta incorpora partido creado; evita recargar getMatches + getPollas después de guardar.
+Storage: getBucket se cachea por isolate caliente.
+Compresión imagen: cede render antes del canvas para que UI no parezca congelada.
+TypeScript check (entorno local, Deno/npm pueden faltar):
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(23,30): error TS2307: Cannot find module 'npm:@supabase/supabase-js@2' or its corresponding type declarations.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(25,22): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(26,35): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(27,21): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(48,3): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(61,28): error TS2307: Cannot find module 'npm:jszip@3.10.1' or its corresponding type declarations.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(1246,19): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(1249,30): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(2239,1): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(2566,30): error TS2304: Cannot find name 'Deno'.
+../../mnt/data/V25H47/polla-api-index-v25h47.ts(2578,28): error TS2304: Cannot find name 'Deno'.
+Cache participantes Admin separado del cache público: SI
+Riesgo evitado: datos públicos nunca se reutilizan como si incluyeran pago/WhatsApp/activación.

@@ -1,0 +1,37 @@
+V25H4.7 — FINAL FORENSIC RELEASE CANDIDATE
+
+CAMBIOS VISIBLES
+- El login existente ahora muestra 5 puntos (•••••), coherente con PIN nuevo de 5.
+
+RENDIMIENTO ADMIN
+- Reabrir/cerrar Admin durante la sesión de 30 min ya no vuelve a pedir siempre
+  participantes y conteos de pronósticos: cache seguro de 30 s.
+- Las acciones que modifican participantes invalidan/actualizan el cache.
+- Al agregar partido, el backend devuelve el partido completo y el frontend lo
+  incorpora localmente. Se evitan 2 viajes extra (getMatches + getPollas).
+- La compresión de imagen permite pintar primero "Subiendo..." para evitar sensación
+  de congelamiento en teléfonos lentos.
+- Verificación de bucket Storage cacheada por isolate caliente.
+
+AUDITORÍA
+Ver AUDITORIA_FORENSE_H47.txt.
+
+INSTALACIÓN
+1) V25H47_version.sql
+2) polla-api-index-v25h47.ts
+3) app-core.js
+4) app-main.js
+5) app-pwa.js
+6) styles.css
+7) index.html
+8) sw.js
+
+PRUEBAS ESPECÍFICAS
+1) Login visual: 5 puntos.
+2) PIN Beta de 4 sigue entrando; nuevo registro exige 5.
+3) Abrir Admin > cerrar modal > volver a abrir 5 veces dentro de 30 s:
+   debe sentirse inmediato y no relanzar participantes/conteos cada vez.
+4) Agregar partido con imagen: confirmar y aparecer sin segunda espera larga.
+5) Editar partido, resultado, participantes: deben refrescar datos correctos.
+6) Salud x4, H1 25x3, H2.
+7) Offline/online y actualización PWA.
