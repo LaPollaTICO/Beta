@@ -1,0 +1,11 @@
+RETEST ÚNICO — V25H5.0.3
+
+Generar 'Compartir mi pronóstico' en un partido con resultado publicado.
+PASS si:
+- caja Resultado/Autor termina antes de la metadata
+- +PUNTOS no toca ningún otro texto
+- POLLA TICO #... / PARTIDO ... está fuera de la caja central
+- ¿TÚ CUÁNTO CREES QUE QUEDA? tiene su propia franja y no se monta
+- QR, ¿TE SUMAS? y mascota están en una zona inferior separada
+- no hay recortes ni solapes
+- el flyer conserva la imagen real del partido y los datos reales del jugador

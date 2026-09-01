@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.2';
+const APP_VERSION = 'V25H5.0.3';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1235,63 +1235,69 @@ async function generatePredictionShareImage(match,mine,footerUrl){
   ctx.strokeStyle='rgba(242,193,78,.62)'; ctx.lineWidth=2;
   roundRect(ctx,imageX,imageY,imageW,imageH,30); ctx.stroke();
 
-  // Bloque de pronóstico/resultado. La etiqueta de Polla/Partido vive aquí para no tapar la imagen.
-  const cardX=52,cardY=752,cardW=W-104,cardH=302;
+  // H5.0.3: bloque medio reestructurado. Resultado y autor viven dentro de
+  // una caja más baja; metadata y CTA tienen franjas verticales independientes.
+  // Así ningún texto puede invadir el resultado aunque existan puntos publicados.
+  const cardX=52,cardY=752,cardW=W-104,cardH=250;
   ctx.fillStyle='rgba(3,12,10,.90)'; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.fill();
   ctx.strokeStyle='rgba(242,193,78,.48)'; ctx.lineWidth=2; roundRect(ctx,cardX,cardY,cardW,cardH,30); ctx.stroke();
 
+  // Divisor vertical contenido completamente dentro de la caja.
   ctx.strokeStyle='rgba(242,193,78,.34)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(W/2,786); ctx.lineTo(W/2,917); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W/2,778); ctx.lineTo(W/2,972); ctx.stroke();
 
-  ctx.fillStyle='#F2C14E'; ctx.font='900 31px Anton, sans-serif';
-  ctx.fillText(match.resultSubmitted?'RESULTADO':'MI PRONÓSTICO',282,800);
+  // Columna izquierda: resultado/pronóstico y puntos, con separaciones fijas.
+  ctx.fillStyle='#F2C14E'; ctx.font='900 30px Anton, sans-serif';
+  ctx.fillText(match.resultSubmitted?'RESULTADO':'MI PRONÓSTICO',282,798);
   const shownScore=match.resultSubmitted?`${match.actualHome} - ${match.actualAway}`:`${mine.home} - ${mine.away}`;
-  ctx.fillStyle='#F6F3EA'; ctx.font='900 88px Anton, sans-serif'; ctx.fillText(shownScore,282,902);
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 82px Anton, sans-serif'; ctx.fillText(shownScore,282,886);
   if(match.resultSubmitted){
-    ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='700 19px Inter, sans-serif';
-    ctx.fillText(`Mi pronóstico: ${mine.home} - ${mine.away}`,282,934);
-    ctx.fillStyle='#F2C14E'; ctx.font='900 27px Anton, sans-serif';
-    ctx.fillText(`+${mine.points??0} PUNTOS`,282,985);
+    ctx.fillStyle='rgba(246,243,234,.80)'; ctx.font='700 20px Inter, sans-serif';
+    ctx.fillText(`Mi pronóstico: ${mine.home} - ${mine.away}`,282,929);
+    ctx.fillStyle='#F2C14E'; ctx.font='900 31px Anton, sans-serif';
+    ctx.fillText(`+${mine.points??0} PUNTOS`,282,978);
   }else{
-    ctx.fillStyle='rgba(246,243,234,.72)'; ctx.font='800 18px Inter, sans-serif';
-    fitCanvasText_(ctx,`${match.home}  ·  ${match.away}`,282,940,400,20);
+    ctx.fillStyle='rgba(246,243,234,.74)'; ctx.font='800 18px Inter, sans-serif';
+    fitCanvasText_(ctx,`${match.home}  ·  ${match.away}`,282,944,400,20);
   }
 
-  ctx.fillStyle='rgba(246,243,234,.82)'; ctx.font='800 21px Inter, sans-serif';
+  // Columna derecha: identidad y estado. Nada del CTA se dibuja dentro de ella.
+  ctx.fillStyle='rgba(246,243,234,.84)'; ctx.font='800 21px Inter, sans-serif';
   ctx.fillText('PRONÓSTICO ENVIADO POR',798,807);
   ctx.fillStyle='#F6F3EA'; ctx.font='900 48px Anton, sans-serif';
-  fitCanvasText_(ctx,authedName||'',798,875,350,48);
+  fitCanvasText_(ctx,authedName||'',798,878,350,48);
   ctx.fillStyle='#48D17A'; ctx.font='800 21px Inter, sans-serif';
-  ctx.fillText('✓ PRONÓSTICO ENVIADO',798,918);
+  ctx.fillText('✓ PRONÓSTICO ENVIADO',798,936);
 
-  // Polla + número de partido: texto limpio, sin globo. Dejamos respiración
-  // suficiente para que los puntos post-resultado nunca se monten encima.
-  ctx.fillStyle='#F2C14E'; ctx.font='900 22px Anton, sans-serif';
-  ctx.fillText(`★  POLLA TICO #${currentPolla.number}  •  PARTIDO ${match.matchNumber}`,W/2,1024);
+  // Franja 1 independiente: metadata pequeña y centrada, sin globo/fondo.
+  ctx.textAlign='center';
+  ctx.fillStyle='#F2C14E'; ctx.font='900 21px Anton, sans-serif';
+  ctx.fillText(`★  POLLA TICO #${currentPolla.number}  •  PARTIDO ${match.matchNumber}  ★`,W/2,1037);
 
-  // Reto limpio, sin burbuja ni fondo: solo texto y líneas decorativas sutiles.
-  ctx.strokeStyle='rgba(242,193,78,.50)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(92,1058); ctx.lineTo(288,1058); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(W-288,1058); ctx.lineTo(W-92,1058); ctx.stroke();
+  // Franja 2 independiente: pregunta principal con aire arriba y abajo.
+  ctx.strokeStyle='rgba(242,193,78,.46)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(92,1069); ctx.lineTo(272,1069); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-272,1069); ctx.lineTo(W-92,1069); ctx.stroke();
   ctx.fillStyle='#F2C14E'; ctx.font='900 32px Anton, sans-serif';
-  ctx.fillText('¿TÚ CUÁNTO CREES QUE QUEDA?',W/2,1068);
+  ctx.fillText('¿TÚ CUÁNTO CREES QUE QUEDA?',W/2,1080);
 
-  // CTA + QR. Sin franja inferior que pueda tapar el QR.
-  const footerY=1090,qrSize=220,qrX=70,qrY=footerY+20;
+  // Zona inferior independiente: QR a la izquierda, copy al centro y mascota a la derecha.
+  // El QR nunca comparte coordenadas con la caja de resultado.
+  const footerY=1102,qrSize=205,qrX=58,qrY=1124;
   await drawShareQR_(ctx,footerUrl,qrX,qrY,qrSize);
 
-  const textX=328;
+  const textX=316;
   ctx.textAlign='left';
-  ctx.fillStyle='#F6F3EA'; ctx.font='900 50px Anton, sans-serif'; ctx.fillText('¿TE SUMAS?',textX,footerY+82);
-  ctx.fillStyle='rgba(246,243,234,.76)'; ctx.font='700 21px Inter, sans-serif';
-  ctx.fillText('Escanea el QR y entra a la Polla',textX,footerY+130);
-  ctx.fillStyle='#F2C14E'; ctx.font='900 28px Anton, sans-serif';
-  ctx.fillText('PRONOSTICA · COMPITE · GANA',textX,footerY+178);
+  ctx.fillStyle='#F6F3EA'; ctx.font='900 48px Anton, sans-serif'; ctx.fillText('¿TE SUMAS?',textX,1180);
+  ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='700 20px Inter, sans-serif';
+  ctx.fillText('Escanea el QR y entra a la Polla',textX,1224);
+  ctx.fillStyle='#F2C14E'; ctx.font='900 27px Anton, sans-serif';
+  ctx.fillText('PRONOSTICA · COMPITE · GANA',textX,1272);
 
   if(mascot){
-    const mh=238,mw=mh*(mascot.width/mascot.height);
-    const mx=W-mw-24,my=footerY+2;
-    ctx.save(); ctx.globalAlpha=.95; ctx.drawImage(mascot,mx,my,mw,mh); ctx.restore();
+    const mh=228,mw=mh*(mascot.width/mascot.height);
+    const mx=W-mw-24,my=1108;
+    ctx.save(); ctx.globalAlpha=.96; ctx.drawImage(mascot,mx,my,mw,mh); ctx.restore();
   }
 
   return new Promise(resolve=>canvas.toBlob(blob=>resolve(blob),'image/png'));

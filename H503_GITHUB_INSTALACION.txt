@@ -1,0 +1,21 @@
+LaPollaTICO V25H5.0.3 — FLYERFIX
+
+Objetivo: corregir exclusivamente la composición del flyer 'Compartir mi pronóstico / Mi resultado'.
+
+ORDEN RECOMENDADO
+1. Supabase Edge Function: desplegar polla-api-index-v25h503.ts.
+2. Ejecutar V25H503_hotfix.sql.
+3. GitHub Pages: reemplazar app-core.js, app-main.js, app-pwa.js, index.html, sw.js y subir mascota-gallo-peru-v25h503.webp.
+   styles.css y manifest.json no cambian funcionalmente, pero pueden reemplazarse desde este paquete sin problema.
+4. Abrir la app y aceptar la actualización PWA.
+5. Salud del sistema debe mostrar V25H5.0.3 en Frontend, SW, Backend y DB.
+6. Generar un flyer de un partido resuelto y validar el layout.
+
+NO CAMBIA
+- puntuación
+- rankings
+- PIN/auth
+- referidos
+- lifecycle
+- RPCs/índices
+- estructura de base de datos

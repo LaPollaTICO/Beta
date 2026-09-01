@@ -1,0 +1,10 @@
+V25H5.0.3 — MICROHOTFIX VISUAL
+
+1. Se redujo la altura del bloque Resultado/Autor y se redistribuyó su contenido.
+2. Resultado, pronóstico y +PUNTOS tienen coordenadas verticales independientes.
+3. El nombre del jugador y estado enviado quedan aislados en la columna derecha.
+4. POLLA TICO # / PARTIDO sale completamente de la caja central.
+5. La pregunta ¿TÚ CUÁNTO CREES QUE QUEDA? ocupa una franja independiente.
+6. QR + CTA + mascota ocupan una zona inferior independiente.
+7. Se preservan imagen real del partido, datos, colores y branding.
+8. Sin cambios de negocio/backend salvo marcador de versión V25H5.0.3.
