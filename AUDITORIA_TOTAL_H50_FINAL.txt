@@ -1,0 +1,74 @@
+LaPollaTICO V25H5.0 — AUDITORÍA ESTÁTICA DE OPTIMIZACIÓN
+
+RESULTADO
+✅ Paquete H5 generado sin funciones nuevas ni cambios deliberados de reglas de negocio.
+✅ Sintaxis app-core.js
+✅ Sintaxis app-main.js
+✅ Sintaxis app-pwa.js
+✅ Sintaxis sw.js
+✅ manifest.json válido
+✅ HTML sin IDs duplicados (208 IDs revisados)
+✅ CSS con llaves balanceadas
+✅ Acciones frontend/backend sincronizadas en revisión estática (75/75 nombres detectados)
+✅ 9/9 PNG originales de comunicados presentes
+✅ 9/9 WebP de preview presentes
+✅ Versionado H5 sincronizado en Frontend/Core/PWA/SW/Backend y migración DB
+
+OPTIMIZACIÓN DE ASSETS
+PNG comunicados originales: 27.72 MiB
+WebP previews H5:         1.78 MiB
+Reducción de preview:     93.6%
+
+Mascota PNG:              232.0 KiB
+Mascota WebP H5:          46.9 KiB
+Reducción mascota:        79.8%
+
+ESTIMACIÓN DE TRANSFERENCIA LOCAL
+(Solo archivos propios; texto estimado con gzip. No incluye fuentes externas ni API.)
+Primer arranque H4.9 aprox.: 338.7 KiB
+Primer arranque H5 aprox.:   154.3 KiB
+Reducción aprox.:            54.5%
+
+Instalación/actualización SW H4.9 aprox.: 1370.9 KiB
+Instalación/actualización SW H5 aprox.:   154.5 KiB
+Reducción aprox.:                       88.7%
+
+CAMBIOS DE RENDIMIENTO APLICADOS
+1) Comunicados: WebP 1024px para preview; PNG original solo al compartir.
+2) Mascota: WebP para portada con PNG fallback.
+3) Preconnect + DNS-prefetch al host Supabase.
+4) SW: eliminado fetch duplicado './' + './index.html'.
+5) SW: iconos PWA ya no se precachean en cada actualización.
+6) Update checker: 10 min por defecto, 15 min con ahorro de datos/2G/3G.
+7) Update checker: no consulta con pestaña oculta ni offline.
+8) Update checker: al volver visible/focus/online comprueba de inmediato.
+9) DB migration: valida RPC críticas e integridad antes de marcar H5.
+10) DB migration: agrega índices calientes únicamente si no detecta uno equivalente.
+11) DB migration: ANALYZE de tablas calientes tras la optimización.
+
+HALLAZGO IMPORTANTE DEL PAQUETE H4.9 RECIBIDO
+El backend referencia 15 RPC SQL; V25H49_full.sql recibido define 5 de ellas.
+Las otras 10 dependen de migraciones anteriores:
+- compact_polla_v2_tico
+- erase_player_history_identity_tico
+- get_admin_prediction_counts_tico
+- get_player_streak_tico
+- get_polla_standings_summary_tico
+- get_polla_summary_by_id_tico
+- get_pollas_summary_page_tico
+- get_pollas_summary_tico
+- get_prediction_trends_summary_tico
+- get_yearly_standings_summary_tico
+
+Por ese motivo no se fabricó un “schema full desde cero” a partir de supuestos.
+V25H50_DB_PREFLIGHT.sql verifica que esas RPC existan en la base real.
+V25H50_optimization.sql aborta antes de cambiar versión si falta alguna.
+
+PENDIENTE PARA CERTIFICACIÓN REAL
+⚠️ No fue posible ejecutar consultas contra la instancia Supabase desde este entorno,
+por lo que índices reales, RPC reales, latencia DB/API y concurrencia deben verificarse
+en Beta ejecutando V25H50_DB_PREFLIGHT.sql y la batería de H50_INSTALACION.txt.
+
+CONCLUSIÓN
+H5 reduce de forma material el peso/tráfico del frontend/PWA sin tocar el negocio.
+La salida a Producción debe ocurrir solo después del preflight DB y la batería Beta.

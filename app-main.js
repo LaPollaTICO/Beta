@@ -113,8 +113,8 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H4.9';
-let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:120};
+const APP_VERSION = 'V25H5.0';
+let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
 let landingTimer = null;
@@ -1393,7 +1393,7 @@ function applyAppConfig_(cfg){
     predictionsEnabled: cfg.predictionsEnabled !== false,
     registrationsEnabled: cfg.registrationsEnabled !== false,
     tutorialUrl: String(cfg.tutorialUrl || appConfig_.tutorialUrl || DEFAULT_TUTORIAL_VIDEO_URL),
-    updateCheckSeconds: Math.min(900, Math.max(60, Number(cfg.updateCheckSeconds || appConfig_.updateCheckSeconds || 120)))
+    updateCheckSeconds: Math.min(900, Math.max(60, Number(cfg.updateCheckSeconds || appConfig_.updateCheckSeconds || 600)))
   };
   renderAppModeBanner_();
   renderAdminConfig_();
@@ -5199,15 +5199,18 @@ function openCommunicationsCenter(){
   buildCommunication('openRegistration');
 }
 const COMM_ARTWORKS={
-  openRegistration:'comunicados/07_ya_abrimos_inscripciones.png',
-  invite:'comunicados/06_invita_amigos.png',
-  jornada:'comunicados/01_aviso_importante.png',
-  last:'comunicados/02_ultimos_minutos.png',
-  todayReview:'comunicados/08_revisa_pronosticos_jornada_hoy.png',
-  payment:'comunicados/03_recordatorio_pago.png',
-  paymentMethods:'comunicados/09_metodos_de_pago.png',
-  results:'comunicados/04_resultados_disponibles.png',
-  qualified:'comunicados/05_clasificados_polla_gratuita.png',
+  // H5: la vista previa usa WebP liviano; al compartir conservamos el PNG original.
+  // Así abrir Comunicados deja de descargar ~3 MB por arte sin sacrificar la calidad
+  // del archivo final que el Admin envía por WhatsApp/compartir.
+  openRegistration:{preview:'comunicados/07_ya_abrimos_inscripciones.webp',share:'comunicados/07_ya_abrimos_inscripciones.png'},
+  invite:{preview:'comunicados/06_invita_amigos.webp',share:'comunicados/06_invita_amigos.png'},
+  jornada:{preview:'comunicados/01_aviso_importante.webp',share:'comunicados/01_aviso_importante.png'},
+  last:{preview:'comunicados/02_ultimos_minutos.webp',share:'comunicados/02_ultimos_minutos.png'},
+  todayReview:{preview:'comunicados/08_revisa_pronosticos_jornada_hoy.webp',share:'comunicados/08_revisa_pronosticos_jornada_hoy.png'},
+  payment:{preview:'comunicados/03_recordatorio_pago.webp',share:'comunicados/03_recordatorio_pago.png'},
+  paymentMethods:{preview:'comunicados/09_metodos_de_pago.webp',share:'comunicados/09_metodos_de_pago.png'},
+  results:{preview:'comunicados/04_resultados_disponibles.webp',share:'comunicados/04_resultados_disponibles.png'},
+  qualified:{preview:'comunicados/05_clasificados_polla_gratuita.webp',share:'comunicados/05_clasificados_polla_gratuita.png'},
   custom:null
 };
 let currentCommunicationType='openRegistration';
@@ -5215,10 +5218,15 @@ function setCommunicationArtwork_(type){
   currentCommunicationType=type;
   const img=document.getElementById('communicationArtwork');
   if(!img) return;
-  const src=COMM_ARTWORKS[type];
+  const asset=COMM_ARTWORKS[type];
+  const src=asset?.preview || asset?.share || '';
   if(!src){img.removeAttribute('src');img.style.display='none';return;}
   img.onload=()=>{img.style.display='block';};
-  img.onerror=()=>{img.style.display='none';};
+  img.onerror=()=>{
+    // Fallback excepcional: si un navegador no pudiera mostrar WebP, usamos el PNG.
+    if(asset?.share && img.getAttribute('src')!==asset.share){ img.src=asset.share; return; }
+    img.style.display='none';
+  };
   img.src=src;
 }
 function formatPollaStartForCommunication_(startDate){
@@ -5277,13 +5285,16 @@ async function copyCommunication(){await copyTextSafe(document.getElementById('c
 async function shareCommunicationWithArtwork(){
   const txt=document.getElementById('communicationText').value.trim();
   if(!txt) return;
-  const src=COMM_ARTWORKS[currentCommunicationType];
+  const asset=COMM_ARTWORKS[currentCommunicationType];
+  const src=asset?.share || asset?.preview || '';
   if(src){
     try{
       const res=await fetch(src,{cache:'no-store'});
       if(res.ok){
         const blob=await res.blob();
-        const file=new File([blob],`comunicado-${currentCommunicationType}.png`,{type:blob.type||'image/png'});
+        const mime=blob.type || (src.endsWith('.webp') ? 'image/webp' : 'image/png');
+        const ext=mime.includes('webp') ? 'webp' : 'png';
+        const file=new File([blob],`comunicado-${currentCommunicationType}.${ext}`,{type:mime});
         if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
           await navigator.share({title:'LaPollaTICO',text:txt,files:[file]});
           return;

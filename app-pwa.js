@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25H4.9)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
@@ -156,8 +156,12 @@ if('serviceWorker' in navigator){
 
       reg.update().catch(()=>{});
       let lastSwUpdateCheck_ = 0;
-      const checkForAppUpdate_ = async () => {
-        // Evita comprobaciones duplicadas por online/visibility en el mismo instante.
+      const checkForAppUpdate_ = async (force=false) => {
+        // H5: no gastamos radio/batería en segundo plano ni intentamos red estando offline.
+        // Al volver a primer plano / recuperar conexión sí hacemos una comprobación inmediata.
+        if(!force && document.visibilityState === 'hidden') return;
+        if(navigator.onLine === false) return;
+        // Evita comprobaciones duplicadas por online/visibility/focus en el mismo instante.
         if(Date.now() - lastSwUpdateCheck_ < 15000) return;
         lastSwUpdateCheck_ = Date.now();
         try{ await reg.update(); }catch(_){}
@@ -165,22 +169,26 @@ if('serviceWorker' in navigator){
         await probeLatestServiceWorker_();
       };
 
-      // Una primera comprobación poco después de abrir y luego con una cadencia
-      // centralizada en app_config. El mínimo es 60 s y el máximo 15 min.
-      setTimeout(checkForAppUpdate_, 12000);
+      // Primera comprobación poco después de abrir. Después, 10 min por defecto.
+      // En ahorro de datos o conexiones lentas subimos a 15 min; focus/online/visible
+      // siguen comprobando de inmediato, así no se sacrifica la detección práctica.
+      setTimeout(()=>void checkForAppUpdate_(false), 12000);
       const scheduleNextUpdateCheck_ = () => {
-        const seconds = Math.min(900, Math.max(60, Number(appConfig_.updateCheckSeconds || 120)));
+        const c=navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+        const slow=!!c?.saveData || ['slow-2g','2g','3g'].includes(String(c?.effectiveType||'').toLowerCase());
+        const configured=Math.min(900, Math.max(300, Number(appConfig_.updateCheckSeconds || 600)));
+        const seconds=slow ? 900 : configured;
         setTimeout(async () => {
-          await checkForAppUpdate_();
+          await checkForAppUpdate_(false);
           scheduleNextUpdateCheck_();
         }, seconds * 1000);
       };
       scheduleNextUpdateCheck_();
       document.addEventListener('visibilitychange', () => {
-        if(document.visibilityState === 'visible') checkForAppUpdate_();
+        if(document.visibilityState === 'visible') void checkForAppUpdate_(true);
       });
-      window.addEventListener('focus', checkForAppUpdate_);
-      window.addEventListener('online', checkForAppUpdate_);
+      window.addEventListener('focus', () => void checkForAppUpdate_(true));
+      window.addEventListener('online', () => void checkForAppUpdate_(true));
 
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if(!appUpdateApplying || appUpdateReloaded_) return;

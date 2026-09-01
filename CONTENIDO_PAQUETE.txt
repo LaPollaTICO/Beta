@@ -1,4 +1,4 @@
-LaPollaTICO V25H4.9 — CONTENIDO
+LaPollaTICO V25H5.0 — CONTENIDO
 
 APP / PWA
 - index.html
@@ -17,24 +17,20 @@ ASSETS RAÍZ
 - apple-touch-icon.png
 - favicon-16x16.png
 - favicon-32x32.png
-- mascota-gallo-peru.png (optimizada para reducir peso)
+- mascota-gallo-peru.png (fallback)
+- mascota-gallo-peru.webp (optimizada)
 
 COMUNICADOS
-- comunicados/01_aviso_importante.png
-- comunicados/02_ultimos_minutos.png
-- comunicados/03_recordatorio_pago.png
-- comunicados/04_resultados_disponibles.png
-- comunicados/05_clasificados_polla_gratuita.png
-- comunicados/06_invita_amigos.png
-- comunicados/07_ya_abrimos_inscripciones.png
-- comunicados/08_revisa_pronosticos_jornada_hoy.png
-- comunicados/09_metodos_de_pago.png
+- 9 PNG originales para compartir
+- 9 WebP 1024px optimizados para preview en app
 
 BACKEND / DB
-- polla-api-index-v25h49.ts
-- V25H49_full.sql
+- polla-api-index-v25h50.ts
+- V25H50_DB_PREFLIGHT.sql (solo lectura)
+- V25H50_optimization.sql
+- V25H49_baseline_reference.sql (referencia de la base recibida)
 
 CONTROL
-- H49_INSTALACION.txt
-- AUDITORIA_TOTAL_H49_FINAL.txt
+- H50_INSTALACION.txt
+- AUDITORIA_TOTAL_H50_FINAL.txt
 - SHA256SUMS.txt

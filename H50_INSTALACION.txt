@@ -1,0 +1,95 @@
+LaPollaTICO V25H5.0 — OPTIMIZACIÓN Y CERTIFICACIÓN (SIN FUNCIONES NUEVAS)
+
+OBJETIVO
+H5 no agrega funcionalidades ni cambia reglas de negocio.
+Solo reduce tráfico/peso, mejora arranque/actualización y refuerza rutas calientes de DB.
+
+CAMBIOS APLICADOS
+1) Comunicados:
+   - PNG originales se conservan para compartir.
+   - WebP 1024px se usa solo como preview dentro de la app.
+2) Mascota:
+   - WebP optimizado para portada; PNG queda como fallback.
+3) Service Worker:
+   - Ya no descarga dos veces index ('./' + './index.html').
+   - Ya no precachea iconos de instalación en cada versión.
+   - Solo precachea la mascota WebP como asset visual opcional.
+4) Actualizaciones PWA:
+   - 10 min por defecto.
+   - 15 min en ahorro de datos / 2G / 3G.
+   - No consulta mientras la pestaña está oculta u offline.
+   - Al volver visible, recuperar conexión o focus hace check inmediato.
+5) Frontend:
+   - preconnect/dns-prefetch directo a Supabase.
+6) DB:
+   - preflight de RPC/duplicados/índices con cobertura por prefijo B-tree.
+   - Producción verificada: RPC 15/15, integridad 3/3 y cobertura efectiva 8/8.
+   - H50 FINAL no crea índices redundantes; solo ANALYZE y sincroniza configuración/versión.
+   - La limpieza de índices duplicados queda separada y requiere auditoría de constraints/uso.
+7) Versión:
+   - Frontend/Core/PWA/SW/Backend/DB => V25H5.0.
+
+ORDEN EN BETA
+A) Ejecutar V25H50_DB_PREFLIGHT.sql.
+   - Todas las RPC deben salir OK.
+   - Los 3 grupos de duplicados deben salir 0.
+   - Si algo sale MISSING/duplicado, NO ejecutar la migración todavía.
+   - En Producción 2026-09-01 ya se verificó: RPC 15/15 OK, integridad 0/0/0 y cobertura efectiva 8/8.
+B) Ejecutar SOLO el V25H50_optimization.sql corregido/final incluido en este paquete.
+C) Desplegar polla-api-index-v25h50.ts como Edge Function polla-api.
+D) Subir a GitHub Pages:
+   index.html
+   styles.css
+   app-core.js
+   app-main.js
+   app-pwa.js
+   sw.js
+   manifest.json
+   mascota-gallo-peru.webp
+   mascota-gallo-peru.png
+   icon-180.png
+   icon-192.png
+   icon-512.png
+   icon-maskable-512.png
+   apple-touch-icon.png
+   favicon-16x16.png
+   favicon-32x32.png
+   carpeta /comunicados completa (PNG + WebP)
+E) Abrir PWA y aceptar “Actualizar”.
+F) Salud debe mostrar V25H5.0 en Frontend / SW / Backend / DB.
+
+BATERÍA DE CERTIFICACIÓN
+1) Portada abre y muestra Polla activa.
+2) Entra/sale/vuelve a una Polla sin flash ni salto raro.
+3) Login existente / activación / registro / recuperación.
+4) Guardar pronóstico y editarlo.
+5) Envío masivo.
+6) Cierre exacto del partido: intentar guardar antes y después.
+7) Admin publica resultado al mismo tiempo que un jugador intenta enviar.
+8) Perder conexión durante lectura y durante envío.
+9) Volver online.
+10) Abrir/compartir cada uno de los 9 comunicados.
+11) Tabla Polla / tabla anual / ganadores / badges.
+12) Admin participantes / pagos / activaciones.
+13) Crear/editar/cancelar/reemplazar partido.
+14) Finalizar/reabrir Polla.
+15) Backup seguro / precheck / sello / compactación / limpieza / auditoría final.
+16) Actualización PWA con pronóstico pendiente: debe bloquear actualización.
+17) Actualización PWA sin cambios pendientes: una sola recarga.
+18) Android Chrome + PWA Android + iPhone Safari/PWA + escritorio.
+
+CRITERIO DE SALIDA A PRODUCCIÓN
+- Cero errores bloqueantes.
+- Cero duplicados de integridad.
+- Todas las RPC requeridas presentes.
+- Salud: DB OK y versiones sincronizadas.
+- Mediana DB ideal <= 800 ms (objetivo mejor: <= 500 ms).
+- Mediana API ideal <= 1500 ms.
+- Ningún error reproducible de pérdida/duplicado de pronóstico.
+
+NOTA SOBRE “SCHEMA FULL”
+V25H49_baseline_reference.sql NO es un bootstrap completo desde cero: el backend actual
+depende de RPC creadas en migraciones anteriores que ese archivo no contiene.
+H5 valida que existan antes de marcar la DB como V25H5.0. Para crear un único
+PRODUCTION_SCHEMA.sql reconstruible desde cero hacen falta las migraciones históricas
+que definieron esas RPC; no se inventaron ni reconstruyeron a ciegas.

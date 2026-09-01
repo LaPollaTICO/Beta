@@ -15,13 +15,16 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name='apple-mobile-web-app-title' content='La Polla TICO'>
 <!-- QRCode se carga bajo demanda (V15) para no frenar la entrada inicial. -->
+<link rel="preconnect" href="https://iiuppczbeezwxevlnahk.supabase.co" crossorigin>
+<link rel="dns-prefetch" href="//iiuppczbeezwxevlnahk.supabase.co">
+<link rel="preload" href="mascota-gallo-peru.webp" as="image" type="image/webp" fetchpriority="high">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=V25H4.9">
-<script src="./app-core.js?v=V25H4.9" defer></script>
-<script src="./app-main.js?v=V25H4.9" defer></script>
-<script src="./app-pwa.js?v=V25H4.9" defer></script>
+<link rel="stylesheet" href="./styles.css?v=V25H5.0">
+<script src="./app-core.js?v=V25H5.0" defer></script>
+<script src="./app-main.js?v=V25H5.0" defer></script>
+<script src="./app-pwa.js?v=V25H5.0" defer></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -41,7 +44,7 @@
 <!-- ======= PANTALLA PRINCIPAL ======= -->
 <div id="landingScreen" class="wrap">
   <div class="hero">
-    <div class="mascot-wrap" onclick="openAdminGate()" title="Administrar"><img src="mascota-gallo-peru.png" alt="Mascota La Polla TICO"></div>
+    <div class="mascot-wrap" onclick="openAdminGate()" title="Administrar"><picture><source srcset="mascota-gallo-peru.webp" type="image/webp"><img src="mascota-gallo-peru.png" alt="Mascota La Polla TICO" width="512" height="512" fetchpriority="high" decoding="async"></picture></div>
     <h1>La Polla "TICO"</h1>
     <p class="slogan">⚽ Nos divertimos y ganamos 🏆</p>
   </div>
@@ -301,7 +304,7 @@
       <button class="btn-secondary" onclick="buildCommunication('qualified')">🎟️ Clasificados</button>
       <button class="btn-secondary" onclick="buildCommunication('custom')">✍️ Personalizado</button>
     </div>
-    <img id="communicationArtwork" class="comm-art" alt="Comunicado LaPollaTICO" style="display:none;" onerror="this.style.display='none'">
+    <img id="communicationArtwork" class="comm-art" alt="Comunicado LaPollaTICO" loading="lazy" decoding="async" style="display:none;" onerror="this.style.display='none'">
     <label>Vista previa / edición</label>
     <textarea id="communicationText" style="min-height:190px;"></textarea>
     <button class="btn-secondary" onclick="copyCommunication()">📋 Copiar texto</button>
