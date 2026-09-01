@@ -1,0 +1,42 @@
+LaPollaTICO V25H5.0.2 — RETEST EXPRESS DIRIGIDO
+
+Este retest verifica únicamente áreas tocadas por el hotfix.
+
+BATCH 1 — IDENTIDAD / REFERIDOS
+A. Jugador global existente + nueva Polla + enlace de invitación:
+   - entra con su PIN existente;
+   - queda inscrito;
+   - el invitador gana exactamente 1 referido;
+   - recargar o volver a entrar no duplica el referido.
+B. Admin restablece/cambia PIN de un jugador mientras ese jugador conserva una pestaña autenticada:
+   - la siguiente acción protegida no debe mostrar WRONG_PIN crudo;
+   - debe pedir reautenticación/activación de forma clara;
+   - después de reautenticarse, vuelve a operar normalmente.
+
+BATCH 2 — FECHAS / CONSISTENCIA
+A. Crear partido con cierre pasado: debe rechazarse frontend/backend y no crear partido.
+B. Cancelar + reemplazar con cierre pasado: debe rechazarse y el partido original debe seguir activo, sin cancelación parcial.
+
+BATCH 3 — UX
+A. Verificar ojo mostrar/ocultar en los 5 PIN del jugador y placeholder de 5 puntos.
+B. Código de invitación: botón copiar copia solo el código.
+C. “Olvidé mi PIN”: Sí / No / Volver son opciones explícitas; Volver regresa al ingreso de PIN.
+D. Eliminar Polla finalizada: conservar/borrar puntos y conservar/quitar título son opciones explícitas; “Cancelar eliminación” no hace cambios.
+E. Cancelar el nombre del Admin vuelve atrás.
+F. WhatsApp/PIN incorrecto muestra mensaje humano, no WRONG_PIN.
+
+BATCH 4 — FLYER / PWA / ADMIN
+A. Compartir pronóstico con resultado publicado:
+   - sin globo alrededor de Polla/Partido;
+   - puntos sin superposición;
+   - separación visual correcta con “Mi pronóstico”.
+B. Actualizar de V25H5.0.1 a V25H5.0.2:
+   - una sola actualización controlada;
+   - no debe requerir un refresh manual extra.
+C. Abrir Admin:
+   - participantes y conteos cargan correctamente;
+   - listas siguen funcionando;
+   - “Ver 100 más” aparece únicamente cuando corresponda.
+
+ESCALA
+La eliminación del truncamiento >1000 participantes está verificada por código/paginación, pero NO equivale a una prueba real de 1000 usuarios simultáneos. Esa prueba de carga debe hacerse aparte antes de prometer una cifra exacta de concurrencia.

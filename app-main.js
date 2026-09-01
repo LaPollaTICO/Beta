@@ -92,7 +92,7 @@ function hasValidAdminSession_(){
 const ADMIN_SESSION_ACTIONS_ = new Set([
   'addPolla','editPolla','deletePolla','addMatch','editMatch','deleteMatch','cancelAndReplaceMatch',
   'addParticipants','setParticipantPaid','deleteParticipantFull','previewParticipantDeletion','getHistoricalPlayersAdmin','previewHistoricalPlayerDeletion','deleteHistoricalPlayer',
-  'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin','getActivationCodesAdmin',
+  'renameParticipant','splitParticipantIdentity','resetPin','regenerateActivationCode','getParticipantsAdmin','getAdminPollaBootstrap','getActivationCodesAdmin',
   'submitResult','getAdminLog','getGlobalBackup','getPollaBackup','createSecurePollaBackup','getSecurePollaBackupStatus',
   'getCompactionPrecheck','getCompactionSealStatus','prepareCompactionSeal','compactPollaV2',
   'getStorageCleanupStatus','cleanupCompactedPollaStorage','getFinalArchiveAuditStatus','runFinalArchiveAudit','closeSeason','clearSeasonData',
@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.1';
+const APP_VERSION = 'V25H5.0.2';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -130,6 +130,8 @@ let adminPredictionSummaryCache = {};
 let adminPredictionSummaryPollaId = null;
 let adminPredictionSummaryAt = 0;
 const CACHE_TTL_ADMIN_MS = 30000;
+let adminParticipantsVisibleLimit_ = 100;
+let adminPollasVisibleLimit_ = 100;
 let standingsCache = {pollaId:null, data:null, at:0};
 let yearlyStandingsCache = {data:null, at:0};
 const CACHE_TTL_PARTICIPANTS_MS = 30000;
@@ -196,6 +198,9 @@ function humanError_(value, fallback='No se pudo completar la operación. Intent
   if(low.includes('failed to fetch') || low.includes('networkerror') || low.includes('network error') || low.includes('load failed') || low.includes('timeout') || low.includes('sin conexión')){
     return 'Sin conexión. Revisa tu internet e inténtalo nuevamente.';
   }
+  if(low === 'wrong_pin') return 'PIN incorrecto. Verifica tu PIN e inténtalo nuevamente.';
+  if(low === 'needs_activation') return 'Tu PIN fue restablecido. Usa el nuevo código de activación para volver a entrar.';
+  if(low === 'pin_invalido') return 'El PIN ingresado no es válido.';
   if(/(^|\D)5\d\d(\D|$)/.test(msg) || low.includes('<!doctype') || low.includes('internal server') || low.includes('json')){
     return fallback;
   }
@@ -292,6 +297,42 @@ function topVisibleOverlay_(){
     const topZ=top ? (Number.parseInt(getComputedStyle(top).zIndex,10) || 0) : -1;
     return z >= topZ ? el : top;
   }, null);
+}
+
+// H5.0.2: decisiones de negocio explícitas. “Cancelar/Volver” nunca significa
+// silenciosamente “No”; siempre abandona la decisión sin ejecutar nada.
+let pendingTicoChoice_ = null;
+function ticoChoice_(title,message,options,cancelLabel='← Volver',icon='↔️'){
+  if(pendingTicoChoice_){
+    const previous=pendingTicoChoice_; pendingTicoChoice_=null; previous.resolve(null);
+  }
+  return new Promise(resolve=>{
+    const priorState=history.state ? {...history.state} : routeHistoryState_();
+    pendingTicoChoice_={resolve,priorState};
+    document.getElementById('ticoChoiceTitle').textContent=title||'Elige una opción';
+    document.getElementById('ticoChoiceMessage').textContent=message||'';
+    document.getElementById('ticoChoiceIcon').textContent=icon||'↔️';
+    const actions=document.getElementById('ticoChoiceActions');
+    actions.innerHTML=(options||[]).map((opt,i)=>`<button class="${opt.primary?'btn-primary':'btn-secondary'}" type="button" data-choice-index="${i}">${escapeHtml(opt.label||String(opt.value||''))}</button>`).join('');
+    [...actions.querySelectorAll('[data-choice-index]')].forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const opt=(options||[])[Number(btn.dataset.choiceIndex)];
+        resolveTicoChoice_(opt ? opt.value : null);
+      });
+    });
+    document.getElementById('ticoChoiceCancelBtn').textContent=cancelLabel||'← Volver';
+    openOverlay('ticoChoiceOverlay');
+  });
+}
+function resolveTicoChoice_(value,fromHistory=false){
+  const pending=pendingTicoChoice_;
+  pendingTicoChoice_=null;
+  const el=document.getElementById('ticoChoiceOverlay');
+  if(el){ el.classList.remove('show'); el.style.zIndex=''; }
+  if(!fromHistory && history.state?.ticoOverlay==='ticoChoiceOverlay'){
+    history.replaceState(pending?.priorState || routeHistoryState_(),'',location.href);
+  }
+  if(pending) pending.resolve(value);
 }
 
 
@@ -631,6 +672,32 @@ async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=
         }
       );
       const result = await parseApiResponse_(res, requestId);
+
+      // H5.0.2: si el PIN del jugador cambió desde otra pestaña/dispositivo (por
+      // ejemplo, un reset del Admin), no dejamos una sesión visualmente autenticada
+      // usando una credencial vieja. Solo aplica a peticiones que realmente enviaron
+      // el authedPin actual; un PIN escrito manualmente en Ajustes no cierra sesión.
+      const playerCredentialCode_=String(result?.code || result?.error || '');
+      if(
+        result && !result.ok && authedName && authedPin &&
+        ['WRONG_PIN','NEEDS_ACTIVATION'].includes(playerCredentialCode_) &&
+        ['savePrediction','savePredictionsBulk','updateMyWhatsapp','getMyParticipantStatus','getPlayerBootstrap','getMyPredictions','setSecurityAnswer'].includes(action) &&
+        String(originalParams.pin || '') === String(authedPin)
+      ){
+        const rememberedName = authedName;
+        const staleCode = playerCredentialCode_;
+        resetAuthUI();
+        const nameInput=document.getElementById('playerName');
+        if(nameInput) nameInput.value=rememberedName;
+        renderMatches();
+        const friendly = staleCode === 'NEEDS_ACTIVATION'
+          ? 'Tu PIN fue restablecido. Vuelve a entrar usando el código de activación nuevo.'
+          : 'Tu PIN cambió. Vuelve a ingresar para continuar con tu PIN vigente.';
+        result.code='PLAYER_SESSION_PIN_STALE';
+        result.error=friendly;
+        if(!silent) showToast_(friendly);
+      }
+
       if(result?.ok){
         const matchMutations_ = new Set(['addMatch','editMatch','deleteMatch','cancelAndReplaceMatch','submitResult','compactPollaV2','clearSeasonData']);
         if(matchMutations_.has(action)) invalidateMatchesCache_(originalParams.pollaId || currentPolla?.id || '');
@@ -1182,9 +1249,9 @@ async function generatePredictionShareImage(match,mine,footerUrl){
   ctx.fillStyle='#F6F3EA'; ctx.font='900 88px Anton, sans-serif'; ctx.fillText(shownScore,282,902);
   if(match.resultSubmitted){
     ctx.fillStyle='rgba(246,243,234,.78)'; ctx.font='700 19px Inter, sans-serif';
-    ctx.fillText(`Mi pronóstico: ${mine.home} - ${mine.away}`,282,936);
-    ctx.fillStyle='#F2C14E'; ctx.font='900 25px Anton, sans-serif';
-    ctx.fillText(`+${mine.points??0} PUNTOS`,282,962);
+    ctx.fillText(`Mi pronóstico: ${mine.home} - ${mine.away}`,282,934);
+    ctx.fillStyle='#F2C14E'; ctx.font='900 27px Anton, sans-serif';
+    ctx.fillText(`+${mine.points??0} PUNTOS`,282,985);
   }else{
     ctx.fillStyle='rgba(246,243,234,.72)'; ctx.font='800 18px Inter, sans-serif';
     fitCanvasText_(ctx,`${match.home}  ·  ${match.away}`,282,940,400,20);
@@ -1197,21 +1264,20 @@ async function generatePredictionShareImage(match,mine,footerUrl){
   ctx.fillStyle='#48D17A'; ctx.font='800 21px Inter, sans-serif';
   ctx.fillText('✓ PRONÓSTICO ENVIADO',798,918);
 
-  // Polla + número de partido: fuera de la imagen y dentro del bloque inferior.
-  ctx.fillStyle='rgba(242,193,78,.06)'; roundRect(ctx,303,947,474,42,15); ctx.fill();
-  ctx.strokeStyle='rgba(242,193,78,.32)'; ctx.lineWidth=1.5; roundRect(ctx,303,947,474,42,15); ctx.stroke();
+  // Polla + número de partido: texto limpio, sin globo. Dejamos respiración
+  // suficiente para que los puntos post-resultado nunca se monten encima.
   ctx.fillStyle='#F2C14E'; ctx.font='900 22px Anton, sans-serif';
-  ctx.fillText(`★  POLLA TICO #${currentPolla.number}  •  PARTIDO ${match.matchNumber}`,W/2,976);
+  ctx.fillText(`★  POLLA TICO #${currentPolla.number}  •  PARTIDO ${match.matchNumber}`,W/2,1024);
 
   // Reto limpio, sin burbuja ni fondo: solo texto y líneas decorativas sutiles.
   ctx.strokeStyle='rgba(242,193,78,.50)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(92,1018); ctx.lineTo(288,1018); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(W-288,1018); ctx.lineTo(W-92,1018); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(92,1058); ctx.lineTo(288,1058); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-288,1058); ctx.lineTo(W-92,1058); ctx.stroke();
   ctx.fillStyle='#F2C14E'; ctx.font='900 32px Anton, sans-serif';
-  ctx.fillText('¿TÚ CUÁNTO CREES QUE QUEDA?',W/2,1028);
+  ctx.fillText('¿TÚ CUÁNTO CREES QUE QUEDA?',W/2,1068);
 
   // CTA + QR. Sin franja inferior que pueda tapar el QR.
-  const footerY=1060,qrSize=220,qrX=70,qrY=footerY+20;
+  const footerY=1090,qrSize=220,qrX=70,qrY=footerY+20;
   await drawShareQR_(ctx,footerUrl,qrX,qrY,qrSize);
 
   const textX=328;
@@ -1647,7 +1713,8 @@ window.addEventListener('popstate', (event) => {
   }
   const topOverlay=topVisibleOverlay_();
   if(topOverlay){
-    closeOverlay(topOverlay.id);
+    if(topOverlay.id==='ticoChoiceOverlay' && pendingTicoChoice_) resolveTicoChoice_(null,true);
+    else closeOverlay(topOverlay.id);
     return;
   }
 
@@ -2017,10 +2084,10 @@ function clearAccessBlocks(){
 }
 function showAccessMode(mode){
   clearAccessBlocks();
-  if(mode==='PIN') document.getElementById('accessPinBlock').classList.remove('hidden');
-  if(mode==='ACTIVATE') document.getElementById('accessActivationBlock').classList.remove('hidden');
-  if(mode==='REGISTER') document.getElementById('accessRegisterBlock').classList.remove('hidden');
-  if(mode==='RECOVERY') document.getElementById('accessRecoveryBlock').classList.remove('hidden');
+  if(mode==='PIN'){ document.getElementById('accessPinBlock').classList.remove('hidden'); resetPlayerPinMask_('accessPinInput'); }
+  if(mode==='ACTIVATE'){ document.getElementById('accessActivationBlock').classList.remove('hidden'); resetPlayerPinMask_('activationPinInput'); }
+  if(mode==='REGISTER'){ document.getElementById('accessRegisterBlock').classList.remove('hidden'); resetPlayerPinMask_('registerPinInput'); }
+  if(mode==='RECOVERY'){ document.getElementById('accessRecoveryBlock').classList.remove('hidden'); resetPlayerPinMask_('recoveryPinInput'); }
 }
 function accessError(msg, kind='err'){
   const el=document.getElementById('playerAccessError');
@@ -2082,7 +2149,7 @@ async function finishPlayerAccessWithoutJump_(runner){
 async function submitExistingLogin(){
   const pin=document.getElementById('accessPinInput').value.trim();
   if(!/^\d{4,5}$/.test(pin)){accessError('El PIN debe tener 4 o 5 números.');return;}
-  const result=await apiPost({action:'authName',pollaId:currentPolla.id,name:pendingAccessName,pin});
+  const result=await apiPost({action:'authName',pollaId:currentPolla.id,name:pendingAccessName,pin,referredByCode:incomingRefCode||''});
   if(!result.ok){
     if(result.error==='WRONG_PIN'){ accessError('PIN incorrecto. Puedes reintentarlo, recuperar tu PIN o indicar que eres otra persona.'); return; }
     if(result.error==='NEEDS_ACTIVATION'){ showAccessMode('ACTIVATE'); accessError('Esta cuenta necesita un código de activación.'); return; }
@@ -2090,8 +2157,10 @@ async function submitExistingLogin(){
     if(result.error==='INSCRIPCIONES_CERRADAS'){accessError('Las inscripciones cerraron y todavía no estabas inscrito en esta Polla.');return;}
     if(result.error==='POLLA_FINALIZADA'){accessError('Esta Polla ya finalizó y este jugador no participó en ella.');return;}
     if(result.error==='POLLA_COMPACTADA'){accessError('Esta Polla ya está compactada y se consulta como histórico protegido.');return;}
-    accessError(result.error||'No se pudo ingresar.'); return;
+    if(result.error==='CODIGO_INVALIDO'){accessError('El código de invitación del enlace ya no es válido. Entra sin ese código o pide un enlace nuevo.');return;}
+    accessError(humanError_(result.error,'No se pudo ingresar.')); return;
   }
+  incomingRefCode='';
   closeOverlay('playerAccessOverlay');
   await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),result.registered,false,result.newInThisPolla,result.needsSecurityAnswer,result.referralCode));
 }
@@ -2101,7 +2170,7 @@ async function submitActivation(){
   const pin=document.getElementById('activationPinInput').value.trim();
   if(!code){accessError('Ingresa el código que te brindó Manolo.');return;}
   if(!/^\d{5}$/.test(pin)){accessError('Tu nuevo PIN debe tener 5 números.');return;}
-  const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin});
+  const result=await apiPost({action:'activatePlayer',pollaId:currentPolla.id,name:pendingAccessName,activationCode:code,newPin:pin,referredByCode:incomingRefCode||''});
   if(!result.ok){
     if(result.error==='CODIGO_ACTIVACION_INVALIDO') accessError(`El código de activación no es correcto.${result.attemptsLeft!==undefined?' Te quedan '+result.attemptsLeft+' intento(s).':''}`);
     else if(result.error==='ACTIVATION_LOCKED') accessError(`Demasiados intentos de activación. Espera ${result.minutesLeft||10} minuto(s) y vuelve a intentar.`);
@@ -2109,6 +2178,7 @@ async function submitActivation(){
     else accessError(result.error||'No se pudo activar la cuenta.');
     return;
   }
+  incomingRefCode='';
   closeOverlay('playerAccessOverlay');
   await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,false,false,result.needsSecurityAnswer,result.referralCode));
 }
@@ -2135,9 +2205,19 @@ async function submitNewRegistration(){
   await finishPlayerAccessWithoutJump_(() => onAuthSuccess(result.realName,pin,document.getElementById('nameStatus'),true,true,false,result.needsSecurityAnswer,result.referralCode));
 }
 
-function openRecoveryMode(){
-  const configured = confirm('¿Configuraste anteriormente tu recuperación de PIN?\n\n✅ Aceptar → Sí, la configuré\n❌ Cancelar → No, nunca la configuré');
-  if(!configured){
+async function openRecoveryMode(){
+  const choice = await ticoChoice_(
+    'Recuperar mi PIN',
+    '¿Configuraste anteriormente una respuesta de recuperación?',
+    [
+      {value:'yes',label:'✅ Sí, la configuré',primary:true},
+      {value:'no',label:'❌ No la configuré'}
+    ],
+    '← Volver al ingreso de PIN',
+    '🔑'
+  );
+  if(choice === null) return;
+  if(choice === 'no'){
     accessError('Para recuperar tu acceso, comunícate con Manolo para que resetee tu PIN. Después podrás crear uno nuevo sin perder tus puntos, pronósticos ni historial.');
     return;
   }
@@ -2160,6 +2240,7 @@ async function submitRecoveryFromModal(){
     if(result.error==='RECOVERY_LOCKED'){accessError(`Demasiados intentos de recuperación desde este dispositivo/origen. Intenta nuevamente en ${result.minutesLeft||5} min.`);return;}
     accessError(result.error==='RESPUESTA_INCORRECTA'?`Respuesta incorrecta${result.attemptsLeft!==undefined?` · quedan ${result.attemptsLeft} intento(s)`:''}.`:result.error); return;
   }
+  if(authedName && normalizeName(authedName)===normalizeName(pendingAccessName)) authedPin=pin;
   showAccessMode('PIN'); document.getElementById('accessPinInput').value=pin; accessError('✅ PIN restablecido. Ya puedes entrar.','ok');
 }
 function chooseOtherPerson(){
@@ -2171,8 +2252,9 @@ function chooseOtherPerson(){
 
 async function askForSecurityAnswer(name, pin){
   // Se conserva para el flujo inicial de alta. La llave seguirá disponible luego.
-  const answer = prompt('🔑 Configura tu recuperación de PIN.\n\nEjemplo de respuesta secreta: tu equipo de fútbol favorito.\n\nEscribe tu respuesta secreta aquí:');
-  if(!answer || !answer.trim()) return false;
+  const answer = prompt('🔑 Configura tu recuperación de PIN.\n\nEjemplo de respuesta secreta: tu equipo de fútbol favorito.\n\nEscribe tu respuesta secreta aquí. Si prefieres hacerlo después desde “Tu cuenta”, pulsa Cancelar:');
+  if(answer === null){ showToast_('Puedes configurar la recuperación después desde Tu cuenta.'); return false; }
+  if(!answer.trim()){ showToast_('Respuesta vacía: puedes configurarla después desde Tu cuenta.'); return false; }
   const result = await apiPost({action:'setSecurityAnswer', name, pin, securityAnswer: answer.trim()}).catch(()=>({ok:false}));
   if(result.ok){
     hasSecurityAnswer_ = true;
@@ -2210,6 +2292,7 @@ function openRecoverySettings_(){
     : 'Por seguridad, confirma tu PIN actual para configurar tu respuesta de recuperación.';
   save.textContent = hasSecurityAnswer_ ? 'Guardar nueva recuperación' : 'Configurar recuperación';
   pinInput.value = '';
+  resetPlayerPinMask_('recoveryCurrentPinInput');
   answerInput.value = '';
   err.textContent = '';
   openOverlay('recoverySettingsOverlay');
@@ -2387,8 +2470,13 @@ async function renderMyReferralCode_(){
     myReferralCode = me?.ok ? (me.referralCode || '') : '';
   }
   if(!myReferralCode){ box.classList.add('hidden'); return; }
-  box.innerHTML = `Tu código de invitación: <b>${escapeHtml(myReferralCode)}</b>`;
+  box.innerHTML = `Tu código de invitación: <b>${escapeHtml(myReferralCode)}</b> <button type="button" class="icon-btn" style="vertical-align:middle;margin-left:5px" title="Copiar código" aria-label="Copiar código de invitación" onclick="copyMyReferralCode_()">📋</button>`;
   box.classList.remove('hidden');
+}
+async function copyMyReferralCode_(){
+  if(!myReferralCode) return;
+  const ok=await copyTextSafe(myReferralCode);
+  showToast_(ok ? '📋 Código de invitación copiado' : 'No se pudo copiar automáticamente.');
 }
 
 // 🔥 Racha de aciertos: badge chiquito, solo fuego + número. Se actualiza
@@ -3329,6 +3417,28 @@ function clearNewPollaForm(){
 // cerrado cuando ya se está mostrando (clic para volver a ocultarla).
 const EYE_OPEN_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_CLOSED_SVG = '<svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4 5 10 5c1.2 0 2.3-.2 3.3-.5M22 12s-1.6 2-4.2 3.5M12 17v3M6 15.5L4 18M18 15.5l2 2.5"/></svg>';
+function togglePlayerPinVisibility_(inputId,btn){
+  const input=document.getElementById(inputId);
+  if(!input || !btn) return;
+  const canMaskText=!!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security','disc'));
+  const currentlyMasked=input.dataset.ticoMasked!=='0';
+  if(canMaskText){ input.type='text'; input.style.webkitTextSecurity=currentlyMasked?'none':'disc'; }
+  else { input.type=currentlyMasked?'text':'password'; }
+  input.dataset.ticoMasked=currentlyMasked?'0':'1';
+  btn.innerHTML=currentlyMasked?EYE_CLOSED_SVG:EYE_OPEN_SVG;
+  btn.setAttribute('aria-label',currentlyMasked?'Ocultar PIN':'Mostrar PIN');
+  input.focus();
+}
+function resetPlayerPinMask_(inputId){
+  const input=document.getElementById(inputId);
+  if(!input) return;
+  const btn=input.parentElement?.querySelector('.pin-toggle');
+  const canMaskText=!!(window.CSS && CSS.supports && CSS.supports('-webkit-text-security','disc'));
+  input.dataset.ticoMasked='1';
+  if(canMaskText){ input.type='text'; input.style.webkitTextSecurity='disc'; }
+  else { input.type='password'; }
+  if(btn){ btn.innerHTML=EYE_OPEN_SVG; btn.setAttribute('aria-label','Mostrar PIN'); }
+}
 let adminGateDestination_ = 'pollas';
 function prepareAdminGate_(destination='pollas'){
   adminGateDestination_ = destination;
@@ -3346,7 +3456,11 @@ function prepareAdminGate_(destination='pollas'){
 async function openAdminGate(){
   adminGateDestination_ = 'pollas';
   if(hasValidAdminSession_()){
-    if(!adminName) adminName = askAdminName_();
+    if(!adminName){
+      const pickedAdminName_=askAdminName_();
+      if(pickedAdminName_===null) return;
+      adminName=pickedAdminName_;
+    }
     if(allPollasScope_ !== 'admin' || !Array.isArray(allPollas) || !allPollas.length || (Date.now()-allPollasLoadedAt_)>30000){
       const refreshed=await refreshAdminPollasSafe_(true);
       if(!refreshed && allPollasScope_!=='admin') return;
@@ -3409,7 +3523,12 @@ async function checkGatePin(){
       sessionStorage.setItem('tico:adminSession', adminSessionToken);
       if(adminSessionExpiresAt) sessionStorage.setItem('tico:adminSessionExp', String(adminSessionExpiresAt));
     }
-    adminName = askAdminName_();
+    const pickedAdminName_=askAdminName_();
+    if(pickedAdminName_===null){
+      showToast_('Acceso Admin cancelado.');
+      return;
+    }
+    adminName = pickedAdminName_;
     closeOverlay('adminGateOverlay');
     if(adminGateDestination_ === 'polla'){
       await openCurrentPollaAdminAfterAuth_();
@@ -3572,10 +3691,12 @@ async function withSensitiveAdminConfirmation_(purpose, message, fn){
 }
 
 // Pregunta el nombre de quien administra, para que quede en el historial de
-// cambios quién hizo cada acción. Si cancela, queda como "Admin".
+// cambios quién hizo cada acción. Cancelar SIEMPRE vuelve atrás; dejar vacío y
+// pulsar Aceptar es la forma explícita de continuar como “Admin”.
 function askAdminName_(){
-  const name = prompt('¿Cuál es tu nombre? (queda registrado en el historial de cambios)');
-  return (name && name.trim()) ? name.trim() : 'Admin';
+  const name = prompt('¿Cuál es tu nombre? (queda registrado en el historial de cambios)\n\nSi prefieres continuar como “Admin”, deja el campo vacío y pulsa Aceptar.\nCancelar vuelve atrás.');
+  if(name === null) return null;
+  return name.trim() ? name.trim() : 'Admin';
 }
 async function addPolla(){
   const number = document.getElementById('newPollaNumber').value.trim();
@@ -3605,7 +3726,8 @@ async function addPolla(){
 function renderPollasAdminList(){
   const list = document.getElementById('pollasAdminList');
   if(allPollas.length === 0){ list.innerHTML = '<p class="hint">Sin Pollas creadas todavía.</p>'; return; }
-  list.innerHTML = allPollas.map(p => `
+  const visiblePollas_=allPollas.slice(0,adminPollasVisibleLimit_);
+  list.innerHTML = visiblePollas_.map(p => `
     <div class="list-item">
       <div class="top-row">
         <div class="info">
@@ -3635,7 +3757,11 @@ function renderPollasAdminList(){
       </div>`}
     </div>
   `).join('');
+  if(allPollas.length>visiblePollas_.length){
+    list.insertAdjacentHTML('beforeend',`<button class="btn-secondary" style="margin-top:10px" onclick="showMoreAdminPollas_()">Ver 100 más · ${visiblePollas_.length} de ${allPollas.length}</button>`);
+  }
 }
+function showMoreAdminPollas_(){ adminPollasVisibleLimit_+=100; renderPollasAdminList(); }
 // 🗄️ Archiva una Polla ya finalizada: "duerme" sus partidos y pronósticos
 // en un solo bloque, para que la app no se ponga lenta con el tiempo, SIN
 // borrar su historial — sigue siendo 100% visible desde "Pollas anteriores".
@@ -3713,8 +3839,31 @@ async function deletePolla(id){
     const params = {action:'deletePolla', id, pin: adminPin, adminName: adminName};
     const polla = allPollas.find(p => p.id === id);
     if(polla && polla.status === 'finalizada'){
-      params.keepPoints = confirm('¿Quieres CONSERVAR los puntos de esta Polla en la tabla acumulada del año?\n\n✅ Aceptar → Conservar (se suman al arrastre)\n❌ Cancelar → Borrarlos junto con la Polla').toString();
-      params.keepTitle = confirm('¿Quieres CONSERVAR el título de campeón de esta Polla en la tabla de Ganadores?\n\n✅ Aceptar → Conservar el título\n❌ Cancelar → Quitarle esa victoria al campeón').toString();
+      const pointsChoice = await ticoChoice_(
+        'Puntos de la Polla',
+        '¿Qué quieres hacer con los puntos de esta Polla en la tabla acumulada del año?',
+        [
+          {value:'keep',label:'✅ Conservar puntos en la acumulada',primary:true},
+          {value:'delete',label:'🗑️ Borrar esos puntos con la Polla'}
+        ],
+        '← Cancelar eliminación',
+        '📊'
+      );
+      if(pointsChoice===null) return;
+      params.keepPoints = String(pointsChoice==='keep');
+
+      const titleChoice = await ticoChoice_(
+        'Título de campeón',
+        '¿Qué quieres hacer con el título de campeón asociado a esta Polla?',
+        [
+          {value:'keep',label:'🏆 Conservar el título',primary:true},
+          {value:'delete',label:'🗑️ Quitar esa victoria'}
+        ],
+        '← Cancelar eliminación',
+        '🏆'
+      );
+      if(titleChoice===null) return;
+      params.keepTitle = String(titleChoice==='keep');
     }
     const result = await apiPost(params);
     if(!result.ok){alert(result.error||'No se pudo eliminar la Polla.');return;}
@@ -3724,19 +3873,53 @@ async function deletePolla(id){
 }
 
 /* ============ ADMIN: DENTRO DE UNA POLLA ============ */
+async function loadAdminPollaBootstrap_(){
+  if((!adminPin && !hasValidAdminSession_()) || !currentPolla) return false;
+  const result=await apiPostSilent({
+    action:'getAdminPollaBootstrap', pollaId:currentPolla.id, pin:adminPin, adminName
+  }).catch(()=>null);
+  if(!result?.ok || !Array.isArray(result.participants) || !result.counts) return false;
+  adminParticipantsCache=result.participants;
+  adminParticipantsCachePollaId=currentPolla.id;
+  adminParticipantsCacheAt=Date.now();
+  adminPredictionSummaryCache=result.counts||{};
+  adminPredictionSummaryPollaId=currentPolla.id;
+  adminPredictionSummaryAt=Date.now();
+  matches.forEach(m=>{ if(adminPredictionSummaryCache[m.id]===undefined) adminPredictionSummaryCache[m.id]=0; });
+  return true;
+}
+
 function clearNewMatchForm(){
   ['newMatchNumber','newHome','newAway','newImage','newClose'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('newIsStar').checked = false;
 }
 async function openCurrentPollaAdminAfterAuth_(){
-  if(!adminName) adminName = askAdminName_();
+  if(!adminName){
+    const pickedAdminName_=askAdminName_();
+    if(pickedAdminName_===null) return;
+    adminName=pickedAdminName_;
+  }
   switchAdminTab('tabResumen');
   renderAdminOverview_();
-  // H4.7: reabrir Admin dentro de la misma sesión reutiliza hasta 30 s los
-  // participantes y conteos ya cargados. Las mutaciones invalidan esos caches.
-  void renderParticipantsList(false);
   collapsedAdminGroups = computeDefaultCollapsedGroups();
-  void renderAdminMatchList(true);
+  adminParticipantsVisibleLimit_=100;
+  const participantList=document.getElementById('participantsList');
+  const adminMatchList=document.getElementById('adminMatchList');
+  const canReuseAdmin_=adminParticipantsCachePollaId===currentPolla.id &&
+    adminPredictionSummaryPollaId===currentPolla.id &&
+    (Date.now()-Math.min(adminParticipantsCacheAt||0,adminPredictionSummaryAt||0))<CACHE_TTL_ADMIN_MS;
+  if(canReuseAdmin_){
+    void renderParticipantsList(false);
+    void renderAdminMatchList(false);
+  }else{
+    if(participantList) participantList.innerHTML='<p class="hint">Cargando participantes...</p>';
+    if(adminMatchList) adminMatchList.innerHTML='<p class="hint">Cargando partidos y participación...</p>';
+    void (async()=>{
+      const ok=await loadAdminPollaBootstrap_();
+      if(ok){ await renderParticipantsList(false); await renderAdminMatchList(false); }
+      else { await Promise.all([renderParticipantsList(false),renderAdminMatchList(true)]); }
+    })();
+  }
   document.getElementById('premio1Input').value = currentPolla.premio1 || '';
   document.getElementById('premio2Input').value = currentPolla.premio2 || '';
   document.getElementById('premio3Input').value = currentPolla.premio3 || '';
@@ -4242,7 +4425,8 @@ async function renderParticipantsList(force=false){
   renderPozo();
   renderAdminOverview_();
   if(adminParticipantsCache.length===0){list.innerHTML='<p class="hint">Sin participantes todavía.</p>';return;}
-  list.innerHTML=adminParticipantsCache.map(p=>`
+  const visibleParticipants_=adminParticipantsCache.slice(0,adminParticipantsVisibleLimit_);
+  list.innerHTML=visibleParticipants_.map(p=>`
     <div class="list-item">
       <div class="top-row">
         <div class="info">
@@ -4260,7 +4444,11 @@ async function renderParticipantsList(force=false){
         </div>`}
       </div>
     </div>`).join('');
+  if(adminParticipantsCache.length>visibleParticipants_.length){
+    list.insertAdjacentHTML('beforeend',`<button class="btn-secondary" style="margin-top:10px" onclick="showMoreAdminParticipants_()">Ver 100 más · ${visibleParticipants_.length} de ${adminParticipantsCache.length}</button>`);
+  }
 }
+function showMoreAdminParticipants_(){ adminParticipantsVisibleLimit_+=100; void renderParticipantsList(false); }
 async function toggleParticipantPaid(name, currentlyPaid, btn=null){
   if(btn) btn.disabled=true;
   try{
@@ -4441,6 +4629,7 @@ async function addMatch(){
   if(!matchNumber || !home || !away || !file || !close){ alert('Completa número, equipos, foto y hora de cierre.'); return; }
   if(!/^\d+$/.test(matchNumber) || Number(matchNumber)<=0){ alert('El número de partido debe ser un entero mayor que 0.'); return; }
   if(!closeIso){ alert('La fecha y hora de cierre no son válidas.'); return; }
+  if(new Date(closeIso).getTime() <= Date.now()){ alert('La hora de cierre debe estar en el futuro.'); return; }
   const btn = document.getElementById('addMatchBtn');
   btn.disabled = true; btn.textContent = 'Subiendo...';
   try{
@@ -4599,6 +4788,7 @@ async function confirmCancelAndReplace(){
   if(!rHome || !rAway || !rFile || !rClose){ alert('Completa los datos del nuevo partido de reemplazo.'); return; }
   const rCloseIso=peruInputToISOString_(rClose);
   if(!rCloseIso){ alert('La fecha y hora del reemplazo no son válidas.'); return; }
+  if(new Date(rCloseIso).getTime() <= Date.now()){ alert('La hora de cierre del reemplazo debe estar en el futuro.'); return; }
 
   const btn = document.getElementById('confirmCancelBtn');
   btn.disabled = true; btn.textContent = 'Procesando reemplazo...';

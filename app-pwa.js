@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.1)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.2)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
@@ -6,6 +6,7 @@ let appUpdateRegistration = null;
 let appUpdateApplying = false;
 let appUpdateReloaded_ = false;
 let offeredWorkerVersion_ = '';
+let appUpdateExpectedVersion_ = '';
 
 function removeAppUpdateNotice_(){
   document.getElementById('appUpdateNotice')?.remove();
@@ -49,6 +50,29 @@ async function offerWaitingWorker_(reg){
   showAppUpdateNotice(waitingVersion);
 }
 
+async function reloadWhenNewWorkerControls_(expectedVersion='',previousController=null){
+  const deadline=Date.now()+22000;
+  while(appUpdateApplying && !appUpdateReloaded_ && Date.now()<deadline){
+    const controller=navigator.serviceWorker.controller;
+    const controllerVersion=controller ? await getWorkerVersion_(controller) : '';
+    const controllerChanged = controller && previousController && controller !== previousController;
+    if(controller && (expectedVersion ? controllerVersion===expectedVersion : controllerChanged)){
+      appUpdateReloaded_=true;
+      removeAppUpdateNotice_();
+      location.reload();
+      return true;
+    }
+    await new Promise(r=>setTimeout(r,350));
+  }
+  if(appUpdateApplying && !appUpdateReloaded_){
+    appUpdateApplying=false;
+    const btn=document.getElementById('applyAppUpdateBtn');
+    if(btn){ btn.disabled=false; btn.textContent='Reintentar'; }
+    showToast_('La actualización sigue preparándose. No hace falta recargar manualmente; pulsa Reintentar en unos segundos.');
+  }
+  return false;
+}
+
 function showAppUpdateNotice(waitingVersion=''){
   if(document.getElementById('appUpdateNotice')) return;
   const bar = document.createElement('div');
@@ -85,17 +109,13 @@ function showAppUpdateNotice(waitingVersion=''){
     appUpdateApplying = true;
     const btn = document.getElementById('applyAppUpdateBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Actualizando…'; }
+    const previousController=navigator.serviceWorker.controller;
+    const expectedVersion = waitingVersion || await getWorkerVersion_(waiting);
+    appUpdateExpectedVersion_ = expectedVersion || '';
     waiting.postMessage({type:'SKIP_WAITING'});
-    // F4: algunos navegadores/PWA tardan en emitir controllerchange aunque el
-    // worker nuevo ya se haya activado. No dejamos el botón eternamente en
-    // “Actualizando…”. Si en 8 s no llegó el evento, hacemos una única recarga
-    // controlada; el SW nuevo ya habrá tomado control y servirá su shell actualizado.
-    setTimeout(()=>{
-      if(!appUpdateApplying || appUpdateReloaded_) return;
-      appUpdateReloaded_ = true;
-      removeAppUpdateNotice_();
-      location.reload();
-    },8000);
+    // H5.0.2: nunca recargamos por tiempo suponiendo que el worker nuevo ya controla
+    // la pestaña. Esperamos a comprobarlo; controllerchange sigue siendo la vía rápida.
+    void reloadWhenNewWorkerControls_(expectedVersion,previousController);
   });
 }
 
@@ -190,8 +210,10 @@ if('serviceWorker' in navigator){
       window.addEventListener('focus', () => void checkForAppUpdate_(true));
       window.addEventListener('online', () => void checkForAppUpdate_(true));
 
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
+      navigator.serviceWorker.addEventListener('controllerchange', async () => {
         if(!appUpdateApplying || appUpdateReloaded_) return;
+        const controllerVersion=await getWorkerVersion_(navigator.serviceWorker.controller);
+        if(appUpdateExpectedVersion_ && controllerVersion && controllerVersion!==appUpdateExpectedVersion_) return;
         appUpdateReloaded_ = true;
         removeAppUpdateNotice_();
         location.reload();

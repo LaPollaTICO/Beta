@@ -17,14 +17,14 @@
 <!-- QRCode se carga bajo demanda (V15) para no frenar la entrada inicial. -->
 <link rel="preconnect" href="https://iiuppczbeezwxevlnahk.supabase.co" crossorigin>
 <link rel="dns-prefetch" href="//iiuppczbeezwxevlnahk.supabase.co">
-<link rel="preload" href="mascota-gallo-peru-v25h501.webp" as="image" type="image/webp" fetchpriority="high">
+<link rel="preload" href="mascota-gallo-peru-v25h502.webp" as="image" type="image/webp" fetchpriority="high">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=V25H5.0.1">
-<script src="./app-core.js?v=V25H5.0.1" defer></script>
-<script src="./app-main.js?v=V25H5.0.1" defer></script>
-<script src="./app-pwa.js?v=V25H5.0.1" defer></script>
+<link rel="stylesheet" href="./styles.css?v=V25H5.0.2">
+<script src="./app-core.js?v=V25H5.0.2" defer></script>
+<script src="./app-main.js?v=V25H5.0.2" defer></script>
+<script src="./app-pwa.js?v=V25H5.0.2" defer></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -44,7 +44,7 @@
 <!-- ======= PANTALLA PRINCIPAL ======= -->
 <div id="landingScreen" class="wrap">
   <div class="hero">
-    <div class="mascot-wrap" onclick="openAdminGate()" title="Administrar"><picture><source srcset="mascota-gallo-peru-v25h501.webp" type="image/webp"><img src="mascota-gallo-peru.png" alt="Mascota La Polla TICO" width="512" height="512" fetchpriority="high" decoding="async"></picture></div>
+    <div class="mascot-wrap" onclick="openAdminGate()" title="Administrar"><picture><source srcset="mascota-gallo-peru-v25h502.webp" type="image/webp"><img src="mascota-gallo-peru.png" alt="Mascota La Polla TICO" width="512" height="512" fetchpriority="high" decoding="async"></picture></div>
     <h1>La Polla "TICO"</h1>
     <p class="slogan">⚽ Nos divertimos y ganamos 🏆</p>
   </div>
@@ -140,7 +140,7 @@
 
     <div id="accessPinBlock" class="hidden">
       <label>Tu PIN</label>
-      <input id="accessPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+      <div class="pin-input-wrap"><input id="accessPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc" data-tico-masked="1"><button type="button" class="pin-toggle" title="Mostrar/ocultar PIN" aria-label="Mostrar/ocultar PIN" onclick="togglePlayerPinVisibility_('accessPinInput',this)"><svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
       <button class="btn-primary" onclick="submitExistingLogin()">Entrar</button>
       <button class="btn-secondary" onclick="openRecoveryMode()">Olvidé mi PIN</button>
       <button class="btn-secondary" onclick="chooseOtherPerson()">Soy otra persona</button>
@@ -150,13 +150,13 @@
       <label>Código brindado por Manolo</label>
       <input id="activationCodeInput" autocomplete="off" placeholder="TICO-XXXX">
       <label>Crea tu PIN de 5 dígitos</label>
-      <input id="activationPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+      <div class="pin-input-wrap"><input id="activationPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc" data-tico-masked="1"><button type="button" class="pin-toggle" title="Mostrar/ocultar PIN" aria-label="Mostrar/ocultar PIN" onclick="togglePlayerPinVisibility_('activationPinInput',this)"><svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
       <button class="btn-primary" onclick="submitActivation()">Activar y entrar</button>
     </div>
 
     <div id="accessRegisterBlock" class="hidden">
       <label>Nombre</label><input id="registerNameInput" autocomplete="off">
-      <label>Crea tu PIN de 5 dígitos</label><input id="registerPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+      <label>Crea tu PIN de 5 dígitos</label><div class="pin-input-wrap"><input id="registerPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc" data-tico-masked="1"><button type="button" class="pin-toggle" title="Mostrar/ocultar PIN" aria-label="Mostrar/ocultar PIN" onclick="togglePlayerPinVisibility_('registerPinInput',this)"><svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
       <div id="registerReferralWrap"><label>Código de invitación (opcional)</label><input id="registerReferralInput" autocomplete="off" placeholder="TICOXXXX"></div>
       <label>WhatsApp / teléfono (opcional)</label>
       <input id="registerWhatsappInput" type="tel" inputmode="tel" autocomplete="tel" placeholder="+51 999 999 999">
@@ -166,7 +166,7 @@
 
     <div id="accessRecoveryBlock" class="hidden">
       <label>Respuesta de seguridad</label><input id="recoveryAnswerInput" autocomplete="off">
-      <label>Nuevo PIN de 5 dígitos</label><input id="recoveryPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc">
+      <label>Nuevo PIN de 5 dígitos</label><div class="pin-input-wrap"><input id="recoveryPinInput" inputmode="numeric" maxlength="5" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tico-sensitive="pin" data-lpignore="true" data-1p-ignore placeholder="•••••" style="-webkit-text-security:disc" data-tico-masked="1"><button type="button" class="pin-toggle" title="Mostrar/ocultar PIN" aria-label="Mostrar/ocultar PIN" onclick="togglePlayerPinVisibility_('recoveryPinInput',this)"><svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
       <button class="btn-primary" onclick="submitRecoveryFromModal()">Restablecer PIN</button>
       <button class="btn-secondary" onclick="showAccessMode('PIN')">Volver</button>
     </div>
@@ -208,18 +208,22 @@
     <p class="hint" id="recoverySettingsHint">Configura una respuesta secreta que puedas recordar.</p>
 
     <label>Tu PIN actual</label>
-    <input id="recoveryCurrentPinInput"
-           type="text"
-           inputmode="numeric"
-           maxlength="5"
-           autocomplete="off"
-           autocapitalize="off"
-           spellcheck="false"
-           data-tico-sensitive="pin"
-           data-lpignore="true"
-           data-1p-ignore
-           style="-webkit-text-security:disc"
-           placeholder="••••">
+    <div class="pin-input-wrap">
+      <input id="recoveryCurrentPinInput"
+             type="text"
+             inputmode="numeric"
+             maxlength="5"
+             autocomplete="off"
+             autocapitalize="off"
+             spellcheck="false"
+             data-tico-sensitive="pin"
+             data-lpignore="true"
+             data-1p-ignore
+             data-tico-masked="1"
+             style="-webkit-text-security:disc"
+             placeholder="•••••">
+      <button type="button" class="pin-toggle" title="Mostrar/ocultar PIN" aria-label="Mostrar/ocultar PIN" onclick="togglePlayerPinVisibility_('recoveryCurrentPinInput',this)"><svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </div>
 
     <label id="recoveryNewAnswerLabel">Nueva respuesta secreta</label>
     <input id="recoveryNewAnswerInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Escribe tu respuesta">
@@ -323,6 +327,18 @@
       <button class="btn-secondary" style="margin:0;" onclick="copyAdminList()">Copiar lista</button>
     </div>
     <p class="hint">Estas listas son solo para gestión del Admin y no se publican automáticamente.</p>
+  </div>
+</div>
+
+<!-- ======= DECISIÓN EXPLÍCITA / CANCELABLE ======= -->
+<div class="overlay" id="ticoChoiceOverlay">
+  <div class="modal">
+    <button class="close-x" onclick="resolveTicoChoice_(null)">✕</button>
+    <div class="modal-icon" id="ticoChoiceIcon">↔️</div>
+    <h2 id="ticoChoiceTitle">Elige una opción</h2>
+    <p class="hint tico-choice-message" id="ticoChoiceMessage"></p>
+    <div class="tico-choice-actions" id="ticoChoiceActions"></div>
+    <button class="btn-secondary" id="ticoChoiceCancelBtn" onclick="resolveTicoChoice_(null)">← Volver</button>
   </div>
 </div>
 

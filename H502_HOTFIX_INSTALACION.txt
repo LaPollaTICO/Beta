@@ -1,0 +1,64 @@
+LaPollaTICO V25H5.0.2 — INSTALACIÓN DEL HOTFIX
+
+IMPORTANTE
+Este hotfix parte de V25H5.0.1. No borra datos deportivos ni cambia reglas de puntuación.
+Haz el despliegue completo antes de juzgar las versiones, porque Frontend/SW/Backend/DB deben quedar todos en V25H5.0.2.
+
+ORDEN RECOMENDADO
+
+1) SUPABASE EDGE FUNCTION
+- Abre la función existente "polla-api".
+- Reemplaza el contenido de su index.ts por el contenido de:
+  polla-api-index-v25h502.ts
+- Despliega la MISMA función. No hace falta crear una función nueva.
+- Conserva tus secrets actuales; este paquete no necesita secrets nuevos.
+
+2) SUPABASE SQL
+- Ejecuta:
+  V25H502_hotfix.sql
+- Este SQL solo sincroniza app_config.schema_version a V25H5.0.2.
+- Debe devolver la fila de app_config con schema_version = V25H5.0.2.
+
+3) GITHUB PAGES / FRONTEND
+Publica/reemplaza estos archivos en la raíz del sitio:
+- index.html
+- app-core.js
+- app-main.js
+- app-pwa.js
+- styles.css
+- sw.js
+- manifest.json
+- mascota-gallo-peru-v25h502.webp
+- mascota-gallo-peru.png
+
+No reutilices el viejo WebP v25h501: el nuevo nombre es intencional para evitar cache obsoleto.
+
+4) ACTUALIZACIÓN PWA
+- Abre LaPollaTICO.
+- Cuando aparezca “Nueva actualización disponible”, pulsa Actualizar.
+- V25H5.0.2 espera a que el Service Worker nuevo tome control antes de recargar.
+- No debería hacer falta un segundo refresh manual.
+
+5) SALUD DEL SISTEMA
+En Admin > Salud del sistema > Revisar ahora, verificar:
+- Frontend V25H5.0.2 — Coincide
+- Service Worker V25H5.0.2 — Coincide
+- Backend V25H5.0.2 — Coincide
+- Base de datos V25H5.0.2 — Esquema correcto
+- Base de datos conectada
+- Sin errores técnicos inesperados
+
+6) POSTCHECK DB
+Ejecuta:
+  V25H502_POSTCHECK.sql
+Resultado esperado:
+- schema_version = V25H5.0.2
+- rpcs = 15/15
+- critical_indexes = 8/8
+- duplicate_predictions = 0
+- duplicate_participants = 0
+- duplicate_names = 0
+
+7) RETEST DIRIGIDO
+Sigue H502_RETEST_EXPRESS.txt.
+No es necesario repetir toda la certificación A-Z si estos casos pasan.

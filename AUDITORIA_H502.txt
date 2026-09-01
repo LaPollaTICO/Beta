@@ -1,0 +1,49 @@
+LaPollaTICO V25H5.0.2 — AUDITORÍA ESTÁTICA DEL HOTFIX
+Fecha: 2026-09-01
+
+RESULTADO DE CONSTRUCCIÓN
+- app-core.js: node --check OK
+- app-main.js: node --check OK
+- app-pwa.js: node --check OK
+- sw.js: node --check OK
+- polla-api-index-v25h502.ts: transpile/syntax TypeScript OK
+- index.html: IDs duplicados = 0
+- Service Worker: todos los assets declarados en el paquete existen
+- Residuos V25H5.0.1/v25h501 en archivos ejecutables de despliegue: 0
+
+AUDITORÍA DIRIGIDA DE HALLAZGOS: 23/23 PASS ESTÁTICO
+- stale player PIN / reautenticación
+- WRONG_PIN humanizado
+- PIN recuperación 5 dígitos
+- ojo accessPinInput
+- ojo activationPinInput
+- ojo registerPinInput
+- ojo recoveryPinInput
+- ojo recoveryCurrentPinInput
+- copiar referido
+- referido para usuario existente frontend
+- referido para usuario existente backend
+- cierre futuro en reemplazo frontend
+- cierre futuro en reemplazo backend
+- cierre futuro al crear partido frontend
+- cierre futuro al crear partido backend
+- flyer post-resultado sin globo/solapamiento anterior
+- actualización PWA confirmada por controlador
+- recuperación con 3 decisiones explícitas
+- eliminación de Polla finalizada con decisiones cancelables
+- cancelar nombre Admin vuelve atrás
+- participantes Admin paginados
+- bootstrap Admin consolidado
+- listas grandes renderizadas en bloques de 100
+
+BASE DE DATOS PREVIA AL HOTFIX
+Preflight ejecutado por el usuario antes de este paquete:
+- RPC: 15/15
+- índices críticos: 8/8
+- duplicados pronósticos: 0
+- duplicados participantes: 0
+- duplicados nombres: 0
+
+LÍMITE DE ESTA AUDITORÍA
+Esta auditoría es estática/sintáctica. Los flujos modificados necesitan el retest dirigido incluido en H502_RETEST_EXPRESS.txt antes de congelar la versión como certificada.
+No se afirma que 1000 usuarios simultáneos hayan sido probados; la mejora de >1000 participantes elimina el truncamiento de lectura y reduce el DOM, pero el load test masivo es una etapa separada.

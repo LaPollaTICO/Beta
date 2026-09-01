@@ -1,0 +1,79 @@
+LaPollaTICO V25H5.0.2 — HOTFIX CONSOLIDADO
+Fecha: 2026-09-01
+
+OBJETIVO
+Corregir exclusivamente hallazgos de certificación A-Z y aplicar optimizaciones seguras de escala/rendimiento. No se agregan reglas de negocio nuevas y no se modifica el sistema de puntuación.
+
+CORRECCIONES FUNCIONALES / SEGURIDAD
+1. Sesión de jugador con PIN antiguo
+   - Si el PIN fue restablecido/cambiado mientras otra pestaña seguía abierta, una acción protegida ya no deja al usuario en un estado aparentemente autenticado con credenciales viejas.
+   - Se fuerza reautenticación/activación de forma comprensible y se evita mostrar códigos técnicos crudos.
+
+2. Errores WRONG_PIN
+   - Se humanizan los mensajes de PIN incorrecto, incluido el flujo de WhatsApp/contacto.
+
+3. Referidos de usuarios globales existentes
+   - Si un jugador ya tenía identidad global, entra por primera vez a una Polla mediante un enlace/código de invitación y se autentica con su PIN existente, el referido se valida y se registra en esa primera participación.
+   - La validación ocurre antes de mutaciones sensibles para evitar estados parciales.
+
+4. Fecha de cierre al crear partido
+   - Frontend y backend rechazan una hora de cierre pasada o igual al momento actual.
+
+5. Cancelar + reemplazar partido
+   - Frontend y backend rechazan un reemplazo cuya hora de cierre ya pasó.
+   - La validación se hace antes de cancelar el partido original.
+
+6. Actualización PWA
+   - Se elimina la recarga ciega a los 8 segundos.
+   - La app espera a que el nuevo Service Worker realmente controle la pestaña antes de recargar.
+   - Si la activación tarda demasiado, ofrece reintentar sin exigir un refresh manual.
+
+MEJORAS UX SIN CAMBIO DE NEGOCIO
+7. PIN
+   - Placeholder correcto de 5 dígitos.
+   - Ojo mostrar/ocultar en los 5 campos PIN del jugador.
+
+8. Código de invitación
+   - Botón para copiar únicamente el código de referido.
+
+9. Recuperación de PIN
+   - “Olvidé mi PIN” deja de usar Cancelar como respuesta “No”.
+   - Ahora existen opciones explícitas: Sí configuré / No configuré / Volver.
+
+10. Decisiones administrativas
+   - Al eliminar una Polla finalizada, conservar/borrar puntos y conservar/quitar título son decisiones explícitas.
+   - Cancelar realmente cancela la eliminación.
+   - Cancelar el prompt del nombre del Admin vuelve atrás en vez de continuar silenciosamente como “Admin”.
+   - El alta inicial de recuperación deja explícito que cancelar significa configurarla más tarde.
+
+11. Flyer “Compartir mi pronóstico” post-resultado
+   - Se quita el globo decorativo del bloque Polla/Partido.
+   - Se separan mejor “Mi pronóstico”, puntos, encabezado de Polla/Partido y llamado final para evitar solapamientos.
+
+OPTIMIZACIÓN SEGURA DE ESCALA
+12. Participantes del Admin > 1000
+   - Se elimina la consulta no paginada que podía truncar la lista alrededor del límite REST por defecto.
+   - Participantes y referidos se obtienen paginados.
+   - Solo se solicitan las columnas realmente necesarias para ese panel.
+
+13. Apertura del Admin
+   - Nuevo bootstrap interno de solo lectura: participantes + conteos de pronósticos se obtienen en una sola invocación Edge cuando el cache está vencido.
+   - Se conserva fallback compatible a las rutas anteriores.
+   - Se reutilizan caches de 30 segundos existentes.
+
+14. Render de listas grandes
+   - Participantes Admin: primeros 100 elementos; “Ver 100 más” de forma progresiva.
+   - Pollas Admin: primeros 100 elementos; “Ver 100 más”.
+   - Los datos completos permanecen en memoria; solo se reduce el trabajo inicial del DOM.
+
+NO MODIFICADO DELIBERADAMENTE
+- Fórmula de puntos, exactos, partido estrella, bono de minoría, MVP, ranking o clasificación gratuita.
+- Lifecycle ACTIVE / FINAL_REVIEW / COMPACTED.
+- Tablas ni índices estructurales de la DB: el preflight previo quedó 15/15 RPC, 8/8 índices críticos y 0/0/0 duplicados.
+- Calidad/codec de las imágenes subidas: se mantiene para no introducir una regresión visual en este hotfix.
+
+VERSIÓN
+Frontend: V25H5.0.2
+Service Worker: V25H5.0.2
+Backend: V25H5.0.2
+DB schema_version esperado: V25H5.0.2

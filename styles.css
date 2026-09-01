@@ -27,7 +27,6 @@ body{
 @keyframes fadeSlideUp{from{opacity:0; transform:translateY(16px);}to{opacity:1; transform:translateY(0);}}
 .hero{text-align:center; padding:30px 18px 6px; animation:fadeSlideUp 0.5s ease both;}
 .mascot-wrap{width:170px; height:170px; margin:0 auto 4px; animation:floatMascot 3.5s ease-in-out infinite; cursor:pointer; -webkit-tap-highlight-color:transparent;}
-.mascot-wrap picture{display:block;width:100%;height:100%;}
 .mascot-wrap img{width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 10px 16px rgba(0,0,0,0.45));}
 .hero h1{
   font-family:'Anton', sans-serif; font-size:40px; letter-spacing:1px; margin:2px 0 6px; text-transform:uppercase; line-height:0.98;
@@ -425,10 +424,12 @@ body.app-mode-active #landingScreen,body.app-mode-active #appScreen{padding-top:
 
 .pin-box{text-align:center; padding:10px 0 0;}
 .pin-box input{text-align:center; letter-spacing:6px; font-size:22px;}
-.pin-box .pin-input-wrap{position:relative;}
-.pin-box .pin-input-wrap input{width:100%; padding-right:44px;}
-.pin-box .pin-toggle{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; font-size:18px; padding:8px; line-height:1; color:#5a6b63; -webkit-tap-highlight-color:transparent; display:flex; align-items:center; justify-content:center;}
-.pin-box .pin-toggle .eye-icon{display:block;}
+.pin-input-wrap{position:relative;}
+.pin-input-wrap input{width:100%; padding-right:44px;}
+.pin-toggle{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; font-size:18px; padding:8px; line-height:1; color:#5a6b63; -webkit-tap-highlight-color:transparent; display:flex; align-items:center; justify-content:center;}
+.pin-toggle .eye-icon{display:block;}
+.tico-choice-message{white-space:pre-line;line-height:1.45;text-align:center;margin-bottom:14px;}
+.tico-choice-actions{display:grid;gap:9px;margin-top:12px;}
 
 .prizes-list{display:flex; flex-direction:column; gap:12px; margin-top:6px;}
 .prize-row{display:flex; align-items:center; gap:14px; background:#f4f1e6; border-radius:12px; padding:14px;}
