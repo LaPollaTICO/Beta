@@ -127,7 +127,7 @@ let adminParticipantsCache = [];
 let adminParticipantsCachePollaId = null;
 let adminParticipantsCacheAt = 0;
 let adminPredictionSummaryCache = {};
-let adminPredictionSummaryPollaId = null; adminPredictionSummaryAt = 0;
+let adminPredictionSummaryPollaId = null;
 let adminPredictionSummaryAt = 0;
 const CACHE_TTL_ADMIN_MS = 30000;
 let standingsCache = {pollaId:null, data:null, at:0};

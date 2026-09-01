@@ -1,17 +1,35 @@
-V25H4.5 HOTFIX
-Causa: el app-main.js entregado en el paquete H4.5 conservó por error
-APP_VERSION='V25H4.4'. Backend, DB y Service Worker sí estaban correctamente en H4.5.
+V25H4.7 HOTFIX 1 — ARRANQUE
 
-Este hotfix NO cambia lógica, SQL ni backend.
-Solo:
-- corrige APP_VERSION a V25H4.5;
-- fuerza una URL nueva para app-main.js;
-- fuerza una nueva generación de caché del Service Worker manteniendo SW_VERSION V25H4.5.
+CAUSA EXACTA
+En app-main.js quedó esta secuencia:
+  let adminPredictionSummaryPollaId = null; adminPredictionSummaryAt = 0;
+  let adminPredictionSummaryAt = 0;
 
-Subir en este orden:
+La primera asignación intenta usar adminPredictionSummaryAt antes de que su `let`
+haya sido inicializado (Temporal Dead Zone). Eso genera un ReferenceError al
+ejecutar app-main.js y detiene TODO el JavaScript principal. Por eso la app
+mostraba la estructura visual pero no cargaba ningún dato ni interacción.
+
+CORRECCIÓN
+Ahora es:
+  let adminPredictionSummaryPollaId = null;
+  let adminPredictionSummaryAt = 0;
+
+NO CAMBIA
+- SQL
+- Backend
+- DB
+- lógica de negocio
+- versión pública V25H4.7
+
+SUBIR SOLO
 1) app-main.js
 2) index.html
 3) sw.js
 
-Después pulsa Actualizar cuando aparezca el aviso o cierra/abre la PWA.
-Salud debe quedar V25H4.5 en las cuatro capas.
+Después cerrar completamente la PWA y abrirla otra vez, o aceptar la actualización.
+
+VALIDACIÓN
+- node --check app-main.js: OK
+- node --check sw.js: OK
+- fallo TDZ eliminado
