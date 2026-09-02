@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.4)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.5)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
@@ -42,8 +42,13 @@ async function offerWaitingWorker_(reg){
     getWorkerVersion_(waiting),
     getWorkerVersion_(controller)
   ]);
-  if(waitingVersion && controllerVersion && waitingVersion === controllerVersion) return;
-  const identity = waitingVersion || `${waiting.scriptURL || 'waiting'}:${waiting.state}`;
+
+  // H5.0.5: solo mostramos una actualización si podemos demostrar que el worker
+  // en espera tiene una versión distinta de la que controla esta pestaña.
+  // Esto evita avisos falsos durante la primera instalación/reanudación de Android.
+  if(!waitingVersion || !controllerVersion) return;
+  if(waitingVersion === controllerVersion) return;
+  const identity = waitingVersion;
   if(identity === offeredWorkerVersion_) return;
 
   offeredWorkerVersion_ = identity;
@@ -148,27 +153,23 @@ if('serviceWorker' in navigator){
           const latestVersion = match?.[1] || '';
           if(!latestVersion) return;
 
-          const controllerVersion = await getWorkerVersion_(navigator.serviceWorker.controller);
-          if(controllerVersion && latestVersion === controllerVersion){
-            await offerWaitingWorker_(appUpdateRegistration);
+          const activeReg = appUpdateRegistration || reg;
+          const [controllerVersion, waitingVersion] = await Promise.all([
+            getWorkerVersion_(navigator.serviceWorker.controller),
+            getWorkerVersion_(activeReg?.waiting)
+          ]);
+
+          if(waitingVersion && waitingVersion === latestVersion){
+            await offerWaitingWorker_(activeReg);
             return;
           }
+          if(controllerVersion && latestVersion === controllerVersion) return;
 
-          // Solo cambiamos la URL del script cuando realmente detectamos otra versión.
-          // Así evitamos instalar un worker falso en cada comprobación.
-          const freshReg = await navigator.serviceWorker.register(
-            `sw.js?v=${encodeURIComponent(latestVersion)}`,
-            {scope:'./', updateViaCache:'none'}
-          );
-          appUpdateRegistration = freshReg;
-
-          const installing = freshReg.installing;
-          if(installing){
-            installing.addEventListener('statechange', () => {
-              if(installing.state === 'installed') void offerWaitingWorker_(freshReg);
-            }, {once:false});
-          }
-          await offerWaitingWorker_(freshReg);
+          // H5.0.5: mantenemos SIEMPRE la URL estable sw.js. Registrar sw.js?v=...
+          // cambiaba el scriptURL de la misma scope y podía crear un worker nuevo
+          // aunque la versión publicada fuera la misma, generando un aviso fantasma.
+          try{ await activeReg?.update(); }catch(_){}
+          await offerWaitingWorker_(activeReg);
         }catch(err){
           console.debug('Comprobación de actualización omitida:', err);
         }
@@ -184,7 +185,6 @@ if('serviceWorker' in navigator){
         // Evita comprobaciones duplicadas por online/visibility/focus en el mismo instante.
         if(Date.now() - lastSwUpdateCheck_ < 15000) return;
         lastSwUpdateCheck_ = Date.now();
-        try{ await reg.update(); }catch(_){}
         await offerWaitingWorker_(appUpdateRegistration || reg);
         await probeLatestServiceWorker_();
       };

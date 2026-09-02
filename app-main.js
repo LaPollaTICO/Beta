@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.4';
+const APP_VERSION = 'V25H5.0.5';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1616,6 +1616,62 @@ async function initLanding(){
 }
 // Refresca los "Cierre de inscripciones en..." de la lista de Pollas sin recargar
 // toda la tarjeta, igual que updateCountdowns hace con los partidos abiertos.
+// H5.0.5 — frescura al volver a la PWA. Android puede suspender la app y
+// reanudar exactamente el DOM anterior sin ejecutar initLanding() otra vez.
+// Si estamos en la portada, revalidamos silenciosamente contra Supabase.
+let foregroundLandingRefreshAt_ = 0;
+let foregroundLandingRefreshJob_ = null;
+
+async function refreshLandingOnResume_(){
+  if(document.visibilityState === 'hidden' || navigator.onLine === false) return;
+  const landing = document.getElementById('landingScreen');
+  if(!landing || landing.classList.contains('hidden')) return;
+
+  const now = Date.now();
+  if(foregroundLandingRefreshJob_ || (now - foregroundLandingRefreshAt_) < 5000) return;
+  foregroundLandingRefreshAt_ = now;
+
+  foregroundLandingRefreshJob_ = (async()=>{
+    try{
+      let loaded = null;
+      try{
+        const boot = await apiGet('getLandingBootstrap', {}, 0, true, false);
+        if(boot?.ok && Array.isArray(boot.pollas)){
+          loaded = boot.pollas;
+          if(boot.config) applyAppConfig_(boot.config);
+        }
+      }catch(_){}
+
+      if(!Array.isArray(loaded)){
+        const fallback = await apiGet('getPollas', {scope:'landing'}, 0, true, false).catch(()=>null);
+        if(Array.isArray(fallback)) loaded = fallback;
+      }
+      if(!Array.isArray(loaded)) return;
+
+      allPollas = loaded;
+      allPollasLoadedAt_ = Date.now();
+      allPollasScope_ = 'landing';
+      landingLoadFailed_ = false;
+      renderLanding();
+      prefetchActivePollaMatches_();
+    }catch(_){
+      // Reanudación silenciosa: si la red falla conservamos la última vista útil.
+    }finally{
+      foregroundLandingRefreshJob_ = null;
+    }
+  })();
+
+  await foregroundLandingRefreshJob_;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') void refreshLandingOnResume_();
+});
+window.addEventListener('focus', () => void refreshLandingOnResume_());
+window.addEventListener('pageshow', (event) => {
+  if(event.persisted) void refreshLandingOnResume_();
+});
+
 function updateLandingCountdowns(){
   document.querySelectorAll('#pollasContainer [data-startdate]').forEach(el => {
     const sl = startLabel(el.dataset.startdate);
