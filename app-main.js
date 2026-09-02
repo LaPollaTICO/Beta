@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.7';
+const APP_VERSION = 'V25H5.0.8';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -245,10 +245,22 @@ document.addEventListener('DOMContentLoaded', updateConnectionBar_);
 
 let overlayStackCounter = 0;
 let overlayDismissBackInFlight_ = false;
+// H508: cada carga real de la app tiene su propia sesión de History. Android/PWA
+// puede conservar entradas pushState de una sesión anterior; sin esta marca,
+// un segundo gesto Atrás podía caer en una URL ?polla= antigua y reabrirla.
+const TICO_HISTORY_SESSION_ = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
+function ticoRouteState_(view, pollaId=null){
+  return view === 'polla'
+    ? {view:'polla', pollaId:String(pollaId || ''), ticoSession:TICO_HISTORY_SESSION_}
+    : {view:'landing', ticoSession:TICO_HISTORY_SESSION_};
+}
+function isCurrentTicoHistoryState_(state){
+  return !!state && state.ticoSession === TICO_HISTORY_SESSION_;
+}
 function routeHistoryState_(){
   return currentPolla
-    ? {view:'polla', pollaId:currentPolla.id}
-    : {view:'landing'};
+    ? ticoRouteState_('polla', currentPolla.id)
+    : ticoRouteState_('landing');
 }
 function routeHistoryUrl_(){
   const url=new URL(location.href);
@@ -1765,7 +1777,7 @@ function goToLanding(fromHistory_=false){
   selectedBulkMatches.clear();
   document.getElementById('streakBadge').classList.add('hidden');
   document.getElementById('miniLeaderboard').classList.add('hidden');
-  if(!fromHistory_) history.replaceState({view:'landing'}, '', location.pathname);
+  if(!fromHistory_) history.replaceState(ticoRouteState_('landing'), '', location.pathname);
   if(Array.isArray(allPollas) && allPollas.length){
     renderLanding();
     if(landingTimer) clearInterval(landingTimer);
@@ -1790,17 +1802,29 @@ window.addEventListener('popstate', (event) => {
 
   const params = new URLSearchParams(location.search);
   const pollaId = params.get('polla');
+  const sameHistorySession = isCurrentTicoHistoryState_(event.state);
   if(currentPolla && !pollaId){
     if(!confirmDiscardUnsaved_()){
       const backUrl = new URL(location.href);
       backUrl.searchParams.set('polla', currentPolla.id);
-      history.pushState({view:'polla', pollaId:currentPolla.id}, '', backUrl.pathname + '?' + backUrl.searchParams.toString());
+      history.pushState(ticoRouteState_('polla', currentPolla.id), '', backUrl.pathname + '?' + backUrl.searchParams.toString());
       return;
     }
     goToLanding(true);
     return;
   }
-  if(!currentPolla && pollaId){
+
+  // H508: en Inicio, Atrás jamás debe "resucitar" una Polla de una sesión
+  // anterior. Saltamos automáticamente entradas SPA antiguas hasta que Android
+  // alcance el límite real del historial y cierre/minimice la PWA.
+  if(!currentPolla && !sameHistorySession){
+    setTimeout(()=>history.back(), 0);
+    return;
+  }
+
+  // Conservamos navegación Adelante dentro de ESTA sesión: si el usuario vuelve
+  // hacia la entrada de la Polla que acaba de dejar, sí la restauramos.
+  if(!currentPolla && pollaId && event.state?.view === 'polla'){
     enterPolla(pollaId, true).catch(()=>{});
   }
 });
@@ -1868,15 +1892,19 @@ async function enterPolla(pollaId, restoreFromUrl=false){
   url.searchParams.delete('ref');
   const pollaUrl_ = url.pathname + '?' + url.searchParams.toString();
   if(restoreFromUrl){
-    if(history.state?.view === 'polla'){
-      history.replaceState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    if(history.state?.view === 'polla' && isCurrentTicoHistoryState_(history.state)){
+      history.replaceState(ticoRouteState_('polla', currentPolla.id), '', pollaUrl_);
     } else {
-      history.replaceState({view:'landing'}, '', location.pathname);
-      history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+      // Una URL ?polla= restaurada al abrir la PWA se normaliza como una sesión
+      // nueva: Inicio queda como raíz y la Polla como única entrada interna.
+      history.replaceState(ticoRouteState_('landing'), '', location.pathname);
+      history.pushState(ticoRouteState_('polla', currentPolla.id), '', pollaUrl_);
     }
   } else {
-    if(history.state?.view !== 'landing') history.replaceState({view:'landing'}, '', location.pathname);
-    history.pushState({view:'polla', pollaId:currentPolla.id}, '', pollaUrl_);
+    if(history.state?.view !== 'landing' || !isCurrentTicoHistoryState_(history.state)){
+      history.replaceState(ticoRouteState_('landing'), '', location.pathname);
+    }
+    history.pushState(ticoRouteState_('polla', currentPolla.id), '', pollaUrl_);
   }
 
   // Mientras aún no conocemos los partidos no mostramos una pestaña activa ficticia.
