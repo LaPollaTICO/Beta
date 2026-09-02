@@ -1,4 +1,4 @@
-// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.5)
+// LaPollaTICO — runtime PWA/actualizaciones (V25H5.0.6)
 // Separado del index para reducir riesgo y facilitar mantenimiento.
 
 /* ============ SERVICE WORKER + ACTUALIZACIONES DE LA PWA ============ */
@@ -130,14 +130,23 @@ if('serviceWorker' in navigator){
       const reg = await navigator.serviceWorker.register('sw.js', {updateViaCache:'none'});
       appUpdateRegistration = reg;
 
+      // H5.0.6: una actualización puede empezar DURANTE register() antes de que
+      // alcancemos a escuchar updatefound. Observamos también reg.installing actual;
+      // así el aviso aparece sin que el usuario tenga que refrescar la PWA.
+      const watchInstallingWorker_ = (registration, worker = registration?.installing) => {
+        if(!worker) return;
+        const inspect = () => {
+          if(worker.state === 'installed') void offerWaitingWorker_(registration);
+        };
+        worker.addEventListener('statechange', inspect);
+        inspect();
+      };
+
       await offerWaitingWorker_(reg);
+      watchInstallingWorker_(reg);
 
       reg.addEventListener('updatefound', () => {
-        const worker = reg.installing;
-        if(!worker) return;
-        worker.addEventListener('statechange', () => {
-          if(worker.state === 'installed') void offerWaitingWorker_(reg);
-        });
+        watchInstallingWorker_(reg, reg.installing);
       });
 
       // D2.2: además de registration.update(), consultamos sw.js con cache-bust.
@@ -175,24 +184,42 @@ if('serviceWorker' in navigator){
         }
       }
 
-      reg.update().catch(()=>{});
       let lastSwUpdateCheck_ = 0;
+      let updateCheckJob_ = null;
       const checkForAppUpdate_ = async (force=false) => {
-        // H5: no gastamos radio/batería en segundo plano ni intentamos red estando offline.
-        // Al volver a primer plano / recuperar conexión sí hacemos una comprobación inmediata.
-        if(!force && document.visibilityState === 'hidden') return;
-        if(navigator.onLine === false) return;
-        // Evita comprobaciones duplicadas por online/visibility/focus en el mismo instante.
-        if(Date.now() - lastSwUpdateCheck_ < 15000) return;
-        lastSwUpdateCheck_ = Date.now();
-        await offerWaitingWorker_(appUpdateRegistration || reg);
-        await probeLatestServiceWorker_();
+        // H5.0.6: al volver a primer plano el chequeo "force" sí salta el TTL normal.
+        // Solo aplicamos un debounce corto para visibilitychange+focus disparados juntos.
+        if(document.visibilityState === 'hidden' || navigator.onLine === false) return;
+        const now=Date.now();
+        const minGap = force ? 800 : 15000;
+        if(now - lastSwUpdateCheck_ < minGap) return;
+        if(updateCheckJob_) return updateCheckJob_;
+        lastSwUpdateCheck_=now;
+
+        updateCheckJob_=(async()=>{
+          const activeReg=appUpdateRegistration || reg;
+          await offerWaitingWorker_(activeReg);
+          try{ await activeReg?.update(); }catch(_){}
+
+          // Si register()/update() arrancó una instalación, puede tardar unos instantes
+          // en pasar a waiting. La observamos y reconsultamos de forma acotada.
+          watchInstallingWorker_(activeReg, activeReg?.installing);
+          for(let i=0;i<8;i++){
+            await offerWaitingWorker_(activeReg);
+            if(activeReg?.waiting) break;
+            if(!activeReg?.installing) break;
+            await new Promise(r=>setTimeout(r,250));
+          }
+          await probeLatestServiceWorker_();
+          await offerWaitingWorker_(activeReg);
+        })().finally(()=>{ updateCheckJob_=null; });
+
+        return updateCheckJob_;
       };
 
-      // Primera comprobación poco después de abrir. Después, 10 min por defecto.
-      // En ahorro de datos o conexiones lentas subimos a 15 min; focus/online/visible
-      // siguen comprobando de inmediato, así no se sacrifica la detección práctica.
-      setTimeout(()=>void checkForAppUpdate_(false), 12000);
+      // H5.0.6: comprobación temprana al abrir, no 12 s después. En una PWA que
+      // acaba de volver del fondo el usuario debe enterarse del update sin refrescar.
+      setTimeout(()=>void checkForAppUpdate_(true), 900);
       const scheduleNextUpdateCheck_ = () => {
         const c=navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
         const slow=!!c?.saveData || ['slow-2g','2g','3g'].includes(String(c?.effectiveType||'').toLowerCase());
@@ -209,6 +236,7 @@ if('serviceWorker' in navigator){
       });
       window.addEventListener('focus', () => void checkForAppUpdate_(true));
       window.addEventListener('online', () => void checkForAppUpdate_(true));
+      window.addEventListener('pageshow', () => void checkForAppUpdate_(true));
 
       navigator.serviceWorker.addEventListener('controllerchange', async () => {
         if(!appUpdateApplying || appUpdateReloaded_) return;
