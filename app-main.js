@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.6';
+const APP_VERSION = 'V25H5.0.7';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -587,7 +587,10 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
         url,
         {
           method:'GET',
-          headers:supabaseHeaders_(false, requestId)
+          headers:supabaseHeaders_(false, requestId),
+          // H5.0.7: las lecturas de la Edge Function son datos dinámicos. No se
+          // permite reutilizar una respuesta HTTP vieja del navegador/PWA.
+          cache:'no-store'
         }
       );
 
@@ -1628,14 +1631,14 @@ async function refreshLandingOnResume_(){
   if(!landing || landing.classList.contains('hidden')) return;
 
   const now = Date.now();
-  if(foregroundLandingRefreshJob_ || (now - foregroundLandingRefreshAt_) < 5000) return;
+  if(foregroundLandingRefreshJob_ || (now - foregroundLandingRefreshAt_) < 1200) return;
   foregroundLandingRefreshAt_ = now;
 
   foregroundLandingRefreshJob_ = (async()=>{
     try{
       let loaded = null;
       try{
-        const boot = await apiGet('getLandingBootstrap', {}, 0, true, false);
+        const boot = await apiGet('getLandingBootstrap', {fresh:Date.now()}, 0, true, false);
         if(boot?.ok && Array.isArray(boot.pollas)){
           loaded = boot.pollas;
           if(boot.config) applyAppConfig_(boot.config);
@@ -1643,7 +1646,7 @@ async function refreshLandingOnResume_(){
       }catch(_){}
 
       if(!Array.isArray(loaded)){
-        const fallback = await apiGet('getPollas', {scope:'landing'}, 0, true, false).catch(()=>null);
+        const fallback = await apiGet('getPollas', {scope:'landing',fresh:Date.now()}, 0, true, false).catch(()=>null);
         if(Array.isArray(fallback)) loaded = fallback;
       }
       if(!Array.isArray(loaded)) return;
@@ -3561,7 +3564,7 @@ async function openAdminGate(){
 }
 async function refreshAdminPollasSafe_(showError=true){
   try{
-    const fresh=await apiGet('getPollas',{scope:'admin'});
+    const fresh=await apiGet('getPollas',{scope:'admin',fresh:Date.now()},0,true,false);
     if(!Array.isArray(fresh)) throw new Error('Respuesta inválida');
     allPollas=fresh;
     allPollasLoadedAt_=Date.now();

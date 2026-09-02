@@ -1,9 +1,9 @@
-// Service Worker de La Polla TICO — V25H5.0.6 hotfix de caché/frontend.
+// Service Worker de La Polla TICO — V25H5.0.7 hotfix de caché/frontend.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
-const SHELL_CACHE = 'polla-tico-shell-v25h506';
-const RUNTIME_CACHE = 'polla-tico-runtime-v25h506';
+const SHELL_CACHE = 'polla-tico-shell-v25h507';
+const RUNTIME_CACHE = 'polla-tico-runtime-v25h507';
 
 const ESSENTIAL_SHELL_FILES = [
   // H5: './' y './index.html' eran el mismo documento y se descargaban dos veces.
@@ -43,7 +43,7 @@ self.addEventListener('install', (event) => {
   // No skipWaiting automático: esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H5.0.6';
+const SW_VERSION = 'V25H5.0.7';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){
