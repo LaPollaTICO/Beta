@@ -1,4 +1,4 @@
-// Service Worker de La Polla TICO — V25H5.0.9 hotfix de referidos y microoptimizaciones.
+// Service Worker de La Polla TICO — V25H5.0.11 hotfix de frescura de portada.
 // Actualización confirmada por el usuario: el SW nuevo espera hasta que se pulse
 // “Actualizar”, toma el control y recién entonces la app recarga una sola vez.
 
@@ -43,7 +43,7 @@ self.addEventListener('install', (event) => {
   // No skipWaiting automático: esperamos la confirmación del usuario.
 });
 
-const SW_VERSION = 'V25H5.0.9';
+const SW_VERSION = 'V25H5.0.11';
 
 self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING'){

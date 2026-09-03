@@ -51,6 +51,10 @@ function jsAttr(str){
 let allPollas = [];
 let allPollasLoadedAt_ = 0;
 let allPollasScope_ = 'landing'; // C2: landing=activas/próximas; admin=lista completa
+// Tras una mutación confirmada, la portada puede conservar un resumen viejo
+// en memoria. Actualizamos el dato conocido y lo revalidamos al volver a
+// Inicio, sin obligar al usuario a hacer Refresh.
+let landingNeedsSummaryRevalidation_ = false;
 let currentPolla = null;
 let landingScrollY_ = 0;
 let matches = [];
@@ -113,7 +117,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.9';
+const APP_VERSION = 'V25H5.0.11';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1641,13 +1645,13 @@ async function initLanding(){
 let foregroundLandingRefreshAt_ = 0;
 let foregroundLandingRefreshJob_ = null;
 
-async function refreshLandingOnResume_(){
+async function refreshLandingOnResume_(force=false){
   if(document.visibilityState === 'hidden' || navigator.onLine === false) return;
   const landing = document.getElementById('landingScreen');
   if(!landing || landing.classList.contains('hidden')) return;
 
   const now = Date.now();
-  if(foregroundLandingRefreshJob_ || (now - foregroundLandingRefreshAt_) < 1200) return;
+  if(foregroundLandingRefreshJob_ || (!force && (now - foregroundLandingRefreshAt_) < 1200)) return;
   foregroundLandingRefreshAt_ = now;
 
   foregroundLandingRefreshJob_ = (async()=>{
@@ -1786,6 +1790,12 @@ function goToLanding(fromHistory_=false){
     renderLanding();
     if(landingTimer) clearInterval(landingTimer);
     landingTimer = setInterval(updateLandingCountdowns, 30000);
+    if(landingNeedsSummaryRevalidation_){
+      landingNeedsSummaryRevalidation_ = false;
+      // La mutación ya fue confirmada por el servidor.
+      // Esta lectura silenciosa solo reconcilia cualquier cambio concurrente.
+      void refreshLandingOnResume_(true);
+    }
   } else {
     initLanding();
   }
@@ -2530,6 +2540,8 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
   myWhatsapp_ = myStatus?.ok ? (myStatus.whatsapp || '') : '';
   renderMyReferralCode_();
 
+  if(isNewRegistration || newInThisPolla) reflectConfirmedEnrollmentOnLanding_();
+
   // Reutilizamos el mismo estado para el aviso de pago. Antes se volvía a
   // consultar getMyParticipantStatus inmediatamente, generando otra llamada.
   const payBanner = document.getElementById('payPendingBanner');
@@ -2551,6 +2563,30 @@ async function onAuthSuccess(realName, pin, statusEl, registered, isNewRegistrat
 
   hasSecurityAnswer_ = !stillNeedsSecurityAnswer;
   updateRecoveryButton_();
+}
+
+function reflectConfirmedEnrollmentOnLanding_(){
+  if(!currentPolla?.id) return;
+  const cached = Array.isArray(allPollas)
+    ? allPollas.find(p=>String(p?.id)===String(currentPolla.id))
+    : null;
+  const currentCount = Number(cached?.participantCount ?? currentPolla.participantCount ?? 0);
+  const confirmedCount = (Number.isFinite(currentCount) ? Math.max(0, currentCount) : 0) + 1;
+  if(cached) cached.participantCount = confirmedCount;
+  if(currentPolla !== cached) currentPolla.participantCount = confirmedCount;
+  landingNeedsSummaryRevalidation_ = true;
+}
+
+function reflectConfirmedMatchOnLanding_(){
+  if(!currentPolla?.id) return;
+  const cached = Array.isArray(allPollas)
+    ? allPollas.find(p=>String(p?.id)===String(currentPolla.id))
+    : null;
+  const currentCount = Number(cached?.matchCount ?? currentPolla.matchCount ?? 0);
+  const confirmedCount = (Number.isFinite(currentCount) ? Math.max(0, currentCount) : 0) + 1;
+  if(cached) cached.matchCount = confirmedCount;
+  if(currentPolla !== cached) currentPolla.matchCount = confirmedCount;
+  landingNeedsSummaryRevalidation_ = true;
 }
 
 // Pinta (o esconde) el código de invitación propio junto al botón de invitar.
@@ -4789,6 +4825,13 @@ async function addMatch(){
       pin:adminPin, adminName
     });
     if(!result.ok){ alert(result.error || 'No se pudo agregar.'); return; }
+    // La tarjeta de Inicio usa un resumen de la Polla. Aunque el backend ya
+    // devuelve el partido nuevo, al volver a Inicio revalidamos el resumen
+    // para cubrir también respuestas antiguas o cualquier cambio concurrente.
+    landingNeedsSummaryRevalidation_ = true;
+    // Compatibilidad: si un Edge anterior no incluyera result.match, el
+    // contador también queda correcto desde el momento de volver a Inicio.
+    if(!result.match) reflectConfirmedMatchOnLanding_();
     const msg = `⚽ Nuevo partido${isStar?' ⭐ ESTRELLA':''}: ${home} vs ${away}
 Cierra ${fmtCloseTime(closeIso)} (hora Perú)
 Envía tu pronóstico aquí 👉 ${siteUrl()}?polla=${currentPolla.id}`;
