@@ -113,7 +113,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.8';
+const APP_VERSION = 'V25H5.0.9';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -138,6 +138,10 @@ const CACHE_TTL_PARTICIPANTS_MS = 30000;
 const CACHE_TTL_STANDINGS_MS = 30000;
 const CACHE_TTL_YEARLY_MS = 60000;
 const CACHE_TTL_MATCHES_MS = 30000;
+// La caja informativa puede renderizarse desde varios lugares. Compartimos una
+// respuesta breve; las acciones que usan nombres fuerzan una lectura nueva.
+const CACHE_TTL_FREE_CONTEST_MS = 30000;
+let freeContestStatsCache_ = {data:null, at:0};
 // H5.0.4: una Polla visitada recientemente puede pintarse desde cache hasta 5 min
 // mientras se revalida en segundo plano. No aumenta llamadas frente al flujo anterior:
 // simplemente evita que el usuario tenga que esperar esa llamada para volver a verla.
@@ -2787,6 +2791,7 @@ async function loadMatches(force=false, allowStale=false){
 function invalidateStandingsCaches_(){
   standingsCache = {pollaId:currentPolla?.id||null, data:null, at:0};
   yearlyStandingsCache = {data:null, at:0};
+  invalidateFreeContestStatsCache_();
 }
 function invalidateParticipantsCache_(){
   participantsCache = [];
@@ -4354,12 +4359,24 @@ async function toggleShowWinnersLive(checked){
     return;
   }
   currentPolla.showWinnersLive = checked;
-  await refreshAdminPollasSafe_(true);
+  // El servidor ya confirmó el cambio. Parcheamos los dos estados locales para
+  // que el toggle responda al instante y revalidamos sin bloquear al Admin.
+  const cached = Array.isArray(allPollas) ? allPollas.find(p=>p?.id===currentPolla.id) : null;
+  if(cached) cached.showWinnersLive = checked;
   updateWinnersButtonVisibility();
+  void refreshAdminPollasSafe_(false).then(refreshed=>{
+    if(refreshed) syncCurrentPollaFromAdminCache_();
+  });
 }
 
 async function sendRecruitmentReminder(){
-  const parts = await apiGet('getParticipants', {pollaId: currentPolla.id}).catch(()=>null);
+  const now=Date.now();
+  const adminCacheFresh = adminParticipantsCachePollaId===currentPolla.id &&
+    Array.isArray(adminParticipantsCache) &&
+    (now-adminParticipantsCacheAt)<CACHE_TTL_ADMIN_MS;
+  const parts = adminCacheFresh
+    ? adminParticipantsCache
+    : await getParticipantsCached_().catch(()=>null);
   if(!Array.isArray(parts)){ alert('📡 No se pudo verificar cuántos participantes hay. Inténtalo nuevamente.'); return; }
   const n = parts.length;
   if(n === 0){ alert('Todavía no hay nadie inscrito en esta Polla.'); return; }
@@ -4435,7 +4452,7 @@ async function renderFreeContestBox(){
   const box = document.getElementById('freeContestBox');
   if(!box) return;
   box.innerHTML = '<b>🎁 Polla Gratuita de cierre de temporada</b>Cargando...';
-  const stats = await apiGet('getFreeContestStats').catch(()=>null);
+  const stats = await getFreeContestStatsCached_().catch(()=>null);
   if(!stats || typeof stats.qualifiedCount !== 'number'){
     box.innerHTML = '<b>🎁 Polla Gratuita de cierre de temporada</b>No se pudo cargar en este momento.';
     return;
@@ -4446,13 +4463,27 @@ async function renderFreeContestBox(){
   `;
 }
 
+function invalidateFreeContestStatsCache_(){
+  freeContestStatsCache_ = {data:null, at:0};
+}
+async function getFreeContestStatsCached_(force=false){
+  const now=Date.now();
+  if(!force && freeContestStatsCache_.data && (now-freeContestStatsCache_.at)<CACHE_TTL_FREE_CONTEST_MS){
+    return freeContestStatsCache_.data;
+  }
+  const stats = await apiGet('getFreeContestStats').catch(()=>null);
+  if(!stats) return null;
+  freeContestStatsCache_ = {data:stats, at:Date.now()};
+  return stats;
+}
+
 // 📲 Arma la lista de nombres clasificados y abre WhatsApp con la invitación
 // lista para enviar. Como la app no guarda el número de celular de cada
 // participante, se abre sin destinatario fijo (igual que "Compartir esta
 // Polla") para que el admin la reenvíe puntualmente a cada clasificado o a
 // un grupo/lista de difusión armada solo con ellos.
 async function inviteFreeContestQualifiers(){
-  const stats = await apiGet('getFreeContestStats').catch(()=>null);
+  const stats = await getFreeContestStatsCached_(true).catch(()=>null);
   if(!stats || !Array.isArray(stats.qualifiedNames)){
     alert('📡 No se pudo verificar la lista de clasificados. Inténtalo nuevamente.');
     return;
@@ -5585,7 +5616,7 @@ async function buildCommunication(type){
     const podium=groupPodium(standings); const medals=['🥇','🥈','🥉'];
     txt=`🏆 Resultados · Polla TICO #${p.number||''}\n\n${podium.length?podium.map(x=>`${medals[x.medalIdx]} ${x.name} — ${x.totalPoints} pts`).join('\n'):'La tabla ya fue actualizada.'}\n\nRevisa la tabla completa en la app.\n\n— Manolo`;
   } else if(type==='qualified'){
-    const stats=await apiGet('getFreeContestStats').catch(()=>null);
+    const stats=await getFreeContestStatsCached_(true).catch(()=>null);
     if(!stats || !Array.isArray(stats.qualifiedNames)){
       alert('📡 No se pudo verificar la lista de clasificados. No se generará un comunicado incompleto.');
       return;
@@ -5630,7 +5661,7 @@ async function copyAdminList(){
   const type=document.getElementById('adminListType').value;
   let names=[]; let title='';
   if(type==='qualified'){
-    const stats=await apiGet('getFreeContestStats').catch(()=>null);
+    const stats=await getFreeContestStatsCached_(true).catch(()=>null);
     if(!stats || !Array.isArray(stats.qualifiedNames)){
       alert('📡 No se pudo verificar la lista de clasificados. No se copiará una lista incompleta.');
       return;
