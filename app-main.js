@@ -117,7 +117,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.13';
+const APP_VERSION = 'V25H5.0.14';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -499,9 +499,9 @@ function hideGlobalLoader(){
 // cambios de antena, cobertura débil. Sin esto, una llamada que se cuelga puede dejar
 // el "Cargando..." pegado para siempre, o un botón trabado en "Enviando...".
 const REQUEST_TIMEOUT_MS = 20000;
-async function fetchWithTimeout_(url, options){
+async function fetchWithTimeout_(url, options, timeoutMs=REQUEST_TIMEOUT_MS){
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || REQUEST_TIMEOUT_MS));
   try{
     return await fetch(url, {...(options||{}), signal: controller.signal});
   } finally {
@@ -587,7 +587,7 @@ async function parseApiResponse_(res, requestId=''){
 
 const inflightGetRequests_ = new Map();
 
-async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=true){
+async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=true, timeoutMs=REQUEST_TIMEOUT_MS){
   const requestParams_ = withAdminSession_({action, ...params});
   delete requestParams_.action;
   const qs = new URLSearchParams({action, ...requestParams_}).toString();
@@ -611,7 +611,8 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
           // H5.0.7: las lecturas de la Edge Function son datos dinámicos. No se
           // permite reutilizar una respuesta HTTP vieja del navegador/PWA.
           cache:'no-store'
-        }
+        },
+        timeoutMs
       );
 
       const result = await parseApiResponse_(res, requestId);
@@ -624,14 +625,14 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
 
       if(!res.ok && res.status >= 500 && retriesLeft > 0){
         await new Promise(r => setTimeout(r, 700));
-        return apiGet(action, params, retriesLeft - 1, silent, false);
+        return apiGet(action, params, retriesLeft - 1, silent, false, timeoutMs);
       }
 
       return result;
     } catch(err){
       if(retriesLeft > 0){
         await new Promise(r => setTimeout(r, 700));
-        return apiGet(action, params, retriesLeft - 1, silent, false);
+        return apiGet(action, params, retriesLeft - 1, silent, false, timeoutMs);
       }
       const msg = err?.name === 'AbortError'
         ? 'La solicitud tardó demasiado.'
@@ -657,6 +658,13 @@ async function apiGet(action, params={}, retriesLeft=2, silent=false, dedupe=tru
 
 function apiGetSilent(action, params={}){
   return apiGet(action, params, 2, true, true);
+}
+
+// La portada es la primera pantalla que ve el jugador. En datos móviles no
+// conviene mantenerla bloqueada por los 20 s estándar de una acción pesada:
+// responde rápido con un reintento corto y conserva la última vista válida.
+function apiGetLanding_(action, params={}){
+  return apiGet(action, params, 1, true, true, 8000);
 }
 
 async function apiPost(params, retriesLeft=2, silent=false, adminRenewAttempted=false){
@@ -1578,63 +1586,115 @@ async function saveAppConfig_(){
 }
 
 /* ============ LANDING ============ */
+// H514 — La portada no debe desaparecer porque una red móvil entregue tarde una
+// respuesta vacía. Conservamos un resumen confirmado breve y serializamos toda
+// carga/reanudación para que una respuesta anterior no gane la carrera.
+const LANDING_CACHE_KEY_ = 'tico-landing-v25h514';
+const LANDING_CACHE_MAX_AGE_MS_ = 10 * 60 * 1000;
+let landingLoadJob_ = null;
+
+function hasVisibleLandingPollas_(list){
+  return Array.isArray(list) && list.some(p => p && (p.status === 'actual' || p.status === 'proximamente'));
+}
+function saveLandingCache_(pollas){
+  if(!hasVisibleLandingPollas_(pollas)) return;
+  try{ localStorage.setItem(LANDING_CACHE_KEY_, JSON.stringify({at:Date.now(),pollas})); }catch(_){}
+}
+function restoreLandingCache_(){
+  try{
+    const cached=JSON.parse(localStorage.getItem(LANDING_CACHE_KEY_) || 'null');
+    if(!cached || !Array.isArray(cached.pollas) || (Date.now()-Number(cached.at||0)) > LANDING_CACHE_MAX_AGE_MS_) return false;
+    if(!hasVisibleLandingPollas_(cached.pollas)) return false;
+    allPollas=cached.pollas;
+    allPollasLoadedAt_=Number(cached.at)||Date.now();
+    allPollasScope_='landing';
+    renderLanding();
+    return true;
+  }catch(_){ return false; }
+}
+function commitLandingPollas_(pollas){
+  allPollas=pollas;
+  allPollasLoadedAt_=Date.now();
+  allPollasScope_='landing';
+  landingLoadFailed_=false;
+  saveLandingCache_(pollas);
+  renderLanding();
+  prefetchActivePollaMatches_();
+  if(landingTimer) clearInterval(landingTimer);
+  landingTimer=setInterval(updateLandingCountdowns,30000);
+}
+async function fetchLandingPollas_(){
+  let bootstrap=null;
+  try{
+    const boot=await apiGetLanding_('getLandingBootstrap');
+    if(boot?.ok && Array.isArray(boot.pollas)){
+      bootstrap=boot;
+      if(boot.config) applyAppConfig_(boot.config);
+      // Una respuesta con datos ya quedó verificada por el bootstrap del servidor.
+      if(boot.pollas.length) return boot.pollas;
+    }
+  }catch(_){}
+
+  // Si el bootstrap fue vacío o falló, pedimos un segundo resumen independiente.
+  // Una portada vacía solo se acepta cuando esta segunda lectura también la confirma.
+  try{
+    const fallback=await apiGetLanding_('getPollas',{scope:'landing'});
+    if(Array.isArray(fallback)) return fallback;
+  }catch(_){}
+
+  if(bootstrap && Array.isArray(bootstrap.pollas) && bootstrap.pollas.length === 0){
+    throw new Error('No se pudo confirmar la portada vacía.');
+  }
+  throw new Error('Respuesta inválida del servidor');
+}
+async function loadLanding_(showLoading=false){
+  if(landingLoadJob_) return landingLoadJob_;
+  const container=document.getElementById('pollasContainer');
+  const hadUsefulView=hasVisibleLandingPollas_(allPollas);
+  if(showLoading && !hadUsefulView){
+    const restored=restoreLandingCache_();
+    if(!restored) container.innerHTML='<div class="loading-msg">Cargando...</div>';
+  }
+  landingLoadJob_=(async()=>{
+    try{
+      const loaded=await fetchLandingPollas_();
+      commitLandingPollas_(loaded);
+      return true;
+    }catch(err){
+      landingLoadFailed_=true;
+      if(hasVisibleLandingPollas_(allPollas)){
+        if(showLoading) showToast_('📡 Conexión inestable. Se muestra la última Polla disponible.');
+        return false;
+      }
+      document.getElementById('landingScreen').classList.remove('hidden');
+      container.innerHTML=`
+        <div class="no-pollas">
+          <div style="font-size:34px;margin-bottom:8px">📡</div>
+          <b>No se pudieron cargar las Pollas.</b><br>
+          <span style="opacity:.78">Revisa tu conexión a Internet.</span><br>
+          <button class="submit-btn secondary" style="margin-top:14px" onclick="initLanding()">🔄 Reintentar</button>
+        </div>`;
+      return false;
+    }finally{
+      landingLoadJob_=null;
+    }
+  })();
+  return landingLoadJob_;
+}
 async function initLanding(){
   renderAppModeBanner_();
-  const container = document.getElementById('pollasContainer');
-  container.innerHTML = '<div class="loading-msg">Cargando...</div>';
-  try{
-    let loaded = null;
-    try{
-      const boot = await apiGet('getLandingBootstrap', {}, 2, false, true);
-      if(boot?.ok && Array.isArray(boot.pollas)){
-        loaded = boot.pollas;
-        if(boot.config) applyAppConfig_(boot.config);
-      }
-    }catch(_){}
-
-    if(!Array.isArray(loaded)){
-      const [pollasFallback,cfgFallback] = await Promise.all([
-        apiGet('getPollas', {scope:'landing'}),
-        apiGetSilent('getAppConfig').catch(()=>null)
-      ]);
-      loaded = pollasFallback;
-      if(cfgFallback?.ok !== false && cfgFallback) applyAppConfig_(cfgFallback);
-    }
-
-    if(!Array.isArray(loaded)) throw new Error(loaded?.error || 'Respuesta inválida del servidor');
-    allPollas = loaded;
-    allPollasLoadedAt_ = Date.now();
-    allPollasScope_ = 'landing';
-    landingLoadFailed_ = false;
-    renderLanding();
-    prefetchActivePollaMatches_();
-
-    if(landingTimer) clearInterval(landingTimer);
-    landingTimer = setInterval(updateLandingCountdowns, 30000);
-
-    if(incomingPollaId){
-      const requestedId = incomingPollaId;
-      const target = allPollas.find(p => String(p.id) === String(requestedId));
-      if(target){
-        incomingPollaId = '';
-        await enterPolla(target.id, true);
-      } else {
-        incomingPollaId = '';
-        history.replaceState(null, '', location.pathname);
-        document.getElementById('landingScreen').classList.remove('hidden');
-        showToast_('La Polla solicitada ya no está disponible.');
-      }
-    }
-  }catch(err){
-    landingLoadFailed_ = true;
+  const loaded=await loadLanding_(true);
+  if(!loaded || !incomingPollaId) return;
+  const requestedId=incomingPollaId;
+  const target=allPollas.find(p=>String(p.id)===String(requestedId));
+  if(target){
+    incomingPollaId='';
+    await enterPolla(target.id,true);
+  }else{
+    incomingPollaId='';
+    history.replaceState(null,'',location.pathname);
     document.getElementById('landingScreen').classList.remove('hidden');
-    container.innerHTML = `
-      <div class="no-pollas">
-        <div style="font-size:34px;margin-bottom:8px">📡</div>
-        <b>No se pudieron cargar las Pollas.</b><br>
-        <span style="opacity:.78">Revisa tu conexión a Internet.</span><br>
-        <button class="submit-btn secondary" style="margin-top:14px" onclick="initLanding()">🔄 Reintentar</button>
-      </div>`;
+    showToast_('La Polla solicitada ya no está disponible.');
   }
 }
 // Refresca los "Cierre de inscripciones en..." de la lista de Pollas sin recargar
@@ -1655,33 +1715,9 @@ async function refreshLandingOnResume_(force=false){
   foregroundLandingRefreshAt_ = now;
 
   foregroundLandingRefreshJob_ = (async()=>{
-    try{
-      let loaded = null;
-      try{
-        const boot = await apiGet('getLandingBootstrap', {fresh:Date.now()}, 0, true, false);
-        if(boot?.ok && Array.isArray(boot.pollas)){
-          loaded = boot.pollas;
-          if(boot.config) applyAppConfig_(boot.config);
-        }
-      }catch(_){}
-
-      if(!Array.isArray(loaded)){
-        const fallback = await apiGet('getPollas', {scope:'landing',fresh:Date.now()}, 0, true, false).catch(()=>null);
-        if(Array.isArray(fallback)) loaded = fallback;
-      }
-      if(!Array.isArray(loaded)) return;
-
-      allPollas = loaded;
-      allPollasLoadedAt_ = Date.now();
-      allPollasScope_ = 'landing';
-      landingLoadFailed_ = false;
-      renderLanding();
-      prefetchActivePollaMatches_();
-    }catch(_){
-      // Reanudación silenciosa: si la red falla conservamos la última vista útil.
-    }finally{
-      foregroundLandingRefreshJob_ = null;
-    }
+    try{ await loadLanding_(false); }
+    catch(_){ /* La última portada útil queda visible. */ }
+    finally{ foregroundLandingRefreshJob_ = null; }
   })();
 
   await foregroundLandingRefreshJob_;
@@ -5609,6 +5645,8 @@ const COMM_ARTWORKS={
   custom:null
 };
 let currentCommunicationType='openRegistration';
+let communicationBuildEpoch_=0;
+let communicationShareJob_=null;
 function setCommunicationArtwork_(type){
   currentCommunicationType=type;
   const img=document.getElementById('communicationArtwork');
@@ -5635,6 +5673,7 @@ function formatTodayForCommunication_(){
   return new Date().toLocaleDateString('es-PE',{timeZone:APP_TIME_ZONE,weekday:'long',day:'numeric',month:'long'});
 }
 async function buildCommunication(type){
+  const buildEpoch=++communicationBuildEpoch_;
   setCommunicationArtwork_(type);
   const p=currentPolla||{}; const url=`${siteUrl()}?polla=${p.id||''}`; let txt='';
   if(type==='openRegistration'){
@@ -5656,11 +5695,13 @@ async function buildCommunication(type){
   }
   else if(type==='results'){
     const standings=await apiGet('getStandings',{pollaId:p.id}).catch(()=>null);
+    if(buildEpoch!==communicationBuildEpoch_) return;
     if(!Array.isArray(standings)){ alert('📡 No se pudo verificar la tabla para crear el comunicado.'); return; }
     const podium=groupPodium(standings); const medals=['🥇','🥈','🥉'];
     txt=`🏆 Resultados · Polla TICO #${p.number||''}\n\n${podium.length?podium.map(x=>`${medals[x.medalIdx]} ${x.name} — ${x.totalPoints} pts`).join('\n'):'La tabla ya fue actualizada.'}\n\nRevisa la tabla completa en la app.\n\n— Manolo`;
   } else if(type==='qualified'){
     const stats=await getFreeContestStatsCached_(true).catch(()=>null);
+    if(buildEpoch!==communicationBuildEpoch_) return;
     if(!stats || !Array.isArray(stats.qualifiedNames)){
       alert('📡 No se pudo verificar la lista de clasificados. No se generará un comunicado incompleto.');
       return;
@@ -5674,31 +5715,59 @@ Clasificación según la Tabla Acumulada vigente.
 
 — Manolo, Administración TICO`;
   } else txt=`📣 COMUNICADO TICO\n\nEscribe aquí tu comunicado.\n\n— Manolo\nAdministración TICO`;
+  if(buildEpoch!==communicationBuildEpoch_) return;
   document.getElementById('communicationText').value=txt;
 }
 async function copyCommunication(){await copyTextSafe(document.getElementById('communicationText').value);alert('✅ Texto del comunicado copiado.');}
+function setCommunicationShareBusy_(busy){
+  const btn=document.getElementById('communicationShareBtn');
+  if(!btn) return;
+  if(busy){ btn.dataset.originalLabel=btn.textContent; btn.disabled=true; btn.textContent='⏳ Preparando imagen…'; }
+  else { btn.disabled=false; btn.textContent=btn.dataset.originalLabel||'💬 Compartir imagen + mensaje'; }
+}
+function downloadCommunicationFile_(blob,fileName){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=fileName;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
 async function shareCommunicationWithArtwork(){
   const txt=document.getElementById('communicationText').value.trim();
   if(!txt) return;
+  if(communicationShareJob_){ showToast_('⏳ El comunicado ya se está preparando.'); return communicationShareJob_; }
   const asset=COMM_ARTWORKS[currentCommunicationType];
-  const src=asset?.share || asset?.preview || '';
-  if(src){
-    try{
-      const res=await fetch(src,{cache:'no-store'});
-      if(res.ok){
+  const sources=[asset?.preview,asset?.share].filter((src,i,list)=>src&&list.indexOf(src)===i);
+  setCommunicationShareBusy_(true);
+  communicationShareJob_=(async()=>{
+    // Primero WebP (≈250 KB): en red débil evita descargar el PNG de ~3 MB.
+    // Si el dispositivo no admite compartir WebP, se prueba el PNG como respaldo.
+    for(const src of sources){
+      let openingShare=false;
+      try{
+        const res=await fetchWithTimeout_(src,{cache:'force-cache'},12000);
+        if(!res.ok) continue;
         const blob=await res.blob();
-        const mime=blob.type || (src.endsWith('.webp') ? 'image/webp' : 'image/png');
-        const ext=mime.includes('webp') ? 'webp' : 'png';
+        const mime=blob.type||(src.endsWith('.webp')?'image/webp':'image/png');
+        const ext=mime.includes('webp')?'webp':'png';
         const file=new File([blob],`comunicado-${currentCommunicationType}.${ext}`,{type:mime});
         if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+          openingShare=true;
           await navigator.share({title:'LaPollaTICO',text:txt,files:[file]});
           return;
         }
-        const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+        if(!navigator.share){
+          downloadCommunicationFile_(blob,file.name);
+          break;
+        }
+      }catch(e){
+        if(openingShare && e?.name==='AbortError') return;
+        console.warn('No se pudo preparar la imagen del comunicado:',e);
       }
-    }catch(e){console.warn('No se pudo preparar la imagen del comunicado:',e);}
-  }
-  window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,'_blank');
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,'_blank');
+  })();
+  try{ return await communicationShareJob_; }
+  finally{ communicationShareJob_=null; setCommunicationShareBusy_(false); }
 }
 function sendCommunicationWhatsApp(){ return shareCommunicationWithArtwork(); }
 async function copyAdminList(){
