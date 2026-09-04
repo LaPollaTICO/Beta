@@ -117,7 +117,7 @@ function withAdminSession_(obj){
 // entrar). Se manda junto al PIN en cada acción de admin para que el
 // historial de cambios (HistorialAdmin) diga QUIÉN hizo cada cosa.
 let adminName = null;
-const APP_VERSION = 'V25H5.0.14';
+const APP_VERSION = 'V25H5.0.15';
 let appConfig_ = {maintenanceEnabled:false, maintenanceMessage:'', predictionsEnabled:true, registrationsEnabled:true, tutorialUrl:DEFAULT_TUTORIAL_VIDEO_URL, updateCheckSeconds:600};
 let myReferralCode = null;
 let countdownTimer = null;
@@ -1586,15 +1586,28 @@ async function saveAppConfig_(){
 }
 
 /* ============ LANDING ============ */
-// H514 — La portada no debe desaparecer porque una red móvil entregue tarde una
-// respuesta vacía. Conservamos un resumen confirmado breve y serializamos toda
-// carga/reanudación para que una respuesta anterior no gane la carrera.
+// H515 — Conservamos un resumen confirmado breve y serializamos toda
+// carga/reanudación. Además, no volvemos a dibujar la misma tarjeta cuando la
+// caché y el servidor confirman exactamente el mismo estado.
 const LANDING_CACHE_KEY_ = 'tico-landing-v25h514';
 const LANDING_CACHE_MAX_AGE_MS_ = 10 * 60 * 1000;
+const LANDING_OPENING_QUIET_MS_ = 6000;
 let landingLoadJob_ = null;
+let landingLastCommittedAt_ = 0;
 
 function hasVisibleLandingPollas_(list){
   return Array.isArray(list) && list.some(p => p && (p.status === 'actual' || p.status === 'proximamente'));
+}
+function landingComparable_(list){
+  return (Array.isArray(list) ? list : []).map(p=>({
+    id:String(p?.id||''), number:p?.number ?? '', status:p?.status ?? '', startDate:p?.startDate ?? '',
+    imageUrl:p?.imageUrl ?? '', totalMatches:p?.totalMatches ?? 0, matchCount:p?.matchCount ?? 0,
+    participantCount:p?.participantCount ?? 0, isFreePolla:!!p?.isFreePolla,
+    showWinnersLive:!!p?.showWinnersLive, isArchived:!!p?.isArchived, compactedAt:p?.compactedAt ?? null
+  })).sort((a,b)=>a.id.localeCompare(b.id));
+}
+function sameLandingPollas_(before, after){
+  return JSON.stringify(landingComparable_(before)) === JSON.stringify(landingComparable_(after));
 }
 function saveLandingCache_(pollas){
   if(!hasVisibleLandingPollas_(pollas)) return;
@@ -1613,12 +1626,14 @@ function restoreLandingCache_(){
   }catch(_){ return false; }
 }
 function commitLandingPollas_(pollas){
+  const changed=!sameLandingPollas_(allPollas,pollas);
   allPollas=pollas;
-  allPollasLoadedAt_=Date.now();
+  landingLastCommittedAt_=Date.now();
+  allPollasLoadedAt_=landingLastCommittedAt_;
   allPollasScope_='landing';
   landingLoadFailed_=false;
   saveLandingCache_(pollas);
-  renderLanding();
+  if(changed) renderLanding();
   prefetchActivePollaMatches_();
   if(landingTimer) clearInterval(landingTimer);
   landingTimer=setInterval(updateLandingCountdowns,30000);
@@ -1711,6 +1726,9 @@ async function refreshLandingOnResume_(force=false){
   if(!landing || landing.classList.contains('hidden')) return;
 
   const now = Date.now();
+  // Al abrir una PWA Android puede disparar focus casi enseguida. La carga
+  // inicial ya verificó la portada, así que evitamos un segundo repintado.
+  if(!force && landingLastCommittedAt_ && (now - landingLastCommittedAt_) < LANDING_OPENING_QUIET_MS_) return;
   if(foregroundLandingRefreshJob_ || (!force && (now - foregroundLandingRefreshAt_) < 1200)) return;
   foregroundLandingRefreshAt_ = now;
 
